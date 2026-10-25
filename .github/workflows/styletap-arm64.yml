@@ -41,30 +41,20 @@ jobs:
           yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses > /dev/null || test "${PIPESTATUS[1]}" -eq 0
           "$SDKMANAGER" --sdk_root="$SDK_ROOT" --install "ndk;29.0.14206865"
           echo "ANDROID_NDK_HOME=$SDK_ROOT/ndk/29.0.14206865" >> "$GITHUB_ENV"
-      - name: Apply Dynarmic patches when available
+      - name: Apply required Dynarmic compatibility patches
         shell: bash
         run: |
           set -euo pipefail
-          PATCH_DIR="$GITHUB_WORKSPACE/patches"
+          PATCH_DIR="$GITHUB_WORKSPACE/third_party/patches"
           PATCHES=(
             "$PATCH_DIR/dynarmic-0001-thumb32-armv8.patch"
             "$PATCH_DIR/dynarmic-0002-asimd-narrowing.patch"
           )
-          if [ -f "${PATCHES[0]}" ] && [ -f "${PATCHES[1]}" ]; then
-            git -C third_party/dynarmic apply --check "${PATCHES[@]}"
-            git -C third_party/dynarmic apply "${PATCHES[@]}"
-          else
-            echo "::warning::Dynarmic patch files are absent from this fork; compiling the pinned submodule without these patches."
-            printf 'Missing patches: %s\n' "${PATCHES[@]}"
-          fi
-      - name: Prepare Boost headers for Android cross-compilation
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f /usr/include/boost/icl/interval_map.hpp
-          mkdir -p build/boost-headers
-          ln -sfn /usr/include/boost build/boost-headers/boost
-          test -f build/boost-headers/boost/icl/interval_map.hpp
+          for patch in "${PATCHES[@]}"; do
+            test -s "$patch" || { echo "::error::Missing required patch: $patch"; exit 1; }
+          done
+          git -C third_party/dynarmic apply --check "${PATCHES[@]}"
+          git -C third_party/dynarmic apply "${PATCHES[@]}"
       - name: Configure Android ARM64
         run: |
           cmake -S . -B build/android-arm64 -G Ninja \
