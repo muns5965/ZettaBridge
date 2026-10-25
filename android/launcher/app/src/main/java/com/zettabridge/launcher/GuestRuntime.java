@@ -225,6 +225,8 @@ final class GuestRuntime {
             liveActivities.merge(p.packageName, 1, Integer::sum);
         }
         ActivityInfo ai = p.activities.get(activity.getClass().getName());
+        // Pick up a ResourcesImpl the framework replaced since the last activity (rotation).
+        if (p.resources instanceof PluginResources) ((PluginResources) p.resources).syncImpl();
 
         Reflect.trySet(ContextWrapper.class, activity, "mBase", new PluginContext(activity.getBaseContext(), p));
         Reflect.trySet(ContextThemeWrapper.class, activity, "mResources", null);

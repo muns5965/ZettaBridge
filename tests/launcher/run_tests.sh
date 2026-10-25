@@ -15,5 +15,7 @@ javac -encoding UTF-8 -source 17 -target 17 -cp "$ANDROID_JAR" -d "$OUT" \
     "$ROOT/android/launcher/app/src/main/java/com/zettabridge/launcher/PluginFiles.java" \
     "$ROOT/android/launcher/app/src/main/java/com/zettabridge/launcher/PluginClassLoader.java" \
     "$ROOT/android/launcher/app/src/main/java/com/zettabridge/launcher/PluginRecord.java" \
+    "$ROOT/android/launcher/app/src/main/java/com/zettabridge/launcher/PluginResources.java" \
+    "$ROOT/android/launcher/app/src/main/java/com/zettabridge/launcher/Reflect.java" \
     "$ROOT/tests/launcher/LauncherContractsTest.java"
 java -ea -cp "$OUT:$ANDROID_JAR" com.zettabridge.launcher.LauncherContractsTest

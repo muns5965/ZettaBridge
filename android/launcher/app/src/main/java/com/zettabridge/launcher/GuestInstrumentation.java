@@ -27,6 +27,12 @@ import java.lang.reflect.Method;
  */
 final class GuestInstrumentation extends Instrumentation {
     private static final String TAG = "zb-launcher";
+    /** The view ids StyleTap.onCreate resolves with getIdentifier(name, "id", getPackageName()). */
+    private static final String[] STYLETAP_VIEW_IDS = {
+        "dummyEditField", "surfaceView1", "keyboardButton", "screenScroll", "quitButton", "menuButton",
+        "zoomDezoomButton", "navUpButton", "navDownButton", "navLeftButton", "navRightButton",
+        "navCentreButton", "f1Button", "f2Button", "f3Button", "f4Button",
+    };
 
     private final GuestRuntime runtime;
     private final Instrumentation base;
@@ -80,14 +86,20 @@ final class GuestInstrumentation extends Instrumentation {
         StringBuilder detail = new StringBuilder("StyleTap view diagnostics: ");
         try {
             Resources res = activity.getResources();
-            String pkg = activity.getClass().getPackage().getName();
-            int id = res.getIdentifier("dummyEditField", "id", pkg);
+            // Same lookup StyleTap.onCreate makes: by name, with getPackageName().
+            String pkg = activity.getPackageName();
             detail.append("activity=").append(activity.getClass().getName())
-                    .append(" contextPackage=").append(activity.getPackageName())
-                    .append(" resourceClass=").append(res.getClass().getName())
-                    .append(" dummyEditFieldId=0x").append(Integer.toHexString(id));
-            View view = id == 0 ? null : activity.findViewById(id);
-            detail.append(" found=").append(view == null ? "null" : view.getClass().getName());
+                    .append(" contextPackage=").append(pkg)
+                    .append(" resourceClass=").append(res.getClass().getName());
+            int missing = 0;
+            for (String name : STYLETAP_VIEW_IDS) {
+                int id = res.getIdentifier(name, "id", pkg);
+                View view = id == 0 ? null : activity.findViewById(id);
+                if (id == 0 || view == null) missing++;
+                detail.append(' ').append(name).append("=0x").append(Integer.toHexString(id))
+                        .append('/').append(view == null ? "null" : view.getClass().getSimpleName());
+            }
+            detail.append(" missingViews=").append(missing).append('/').append(STYLETAP_VIEW_IDS.length);
             Window window = activity.getWindow();
             View decor = window == null ? null : window.peekDecorView();
             detail.append(" decor=").append(decor == null ? "null" : decor.getClass().getName());

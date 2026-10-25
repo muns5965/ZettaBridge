@@ -49,9 +49,8 @@ final class PluginContext extends ContextWrapper {
     /** Wraps a context derived by the framework, with plugin resources in its configuration. */
     private PluginContext derived(Context frameworkContext) {
         Resources host = frameworkContext.getResources();
-        @SuppressWarnings("deprecation")
-        Resources pluginResources = new Resources(plugin.resources.getAssets(), host.getDisplayMetrics(),
-                host.getConfiguration());
+        Resources pluginResources = new PluginResources(plugin.resources.getAssets(), host.getDisplayMetrics(),
+                host.getConfiguration(), getBaseContext().getPackageName(), plugin.packageName);
         return new PluginContext(frameworkContext, plugin, pluginResources);
     }
 

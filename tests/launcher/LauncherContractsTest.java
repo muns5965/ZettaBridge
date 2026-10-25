@@ -147,10 +147,28 @@ public final class LauncherContractsTest {
         check("new".equals(read(new File(target, "lib/current.so"))), "reimport publishes staged files");
     }
 
+    private static void testResourcePackageMapping() {
+        String h = "com.zettabridge.launcher";
+        String g = "com.StyleTap.StyleTap";
+        check(g.equals(PluginResources.mapPackage(h, g, h)), "launcher package maps to plugin");
+        check(PluginResources.mapPackage(h, g, null) == null, "null package unchanged");
+        check("".equals(PluginResources.mapPackage(h, g, "")), "empty package unchanged");
+        check("android".equals(PluginResources.mapPackage(h, g, "android")), "other package unchanged");
+        check(g.equals(PluginResources.mapPackage(h, g, g)), "plugin package unchanged");
+        check("dummyEditField".equals(PluginResources.mapName(h, g, "dummyEditField")), "plain name unchanged");
+        check(PluginResources.mapName(h, g, null) == null, "null name unchanged");
+        check((g + ":id/dummyEditField").equals(PluginResources.mapName(h, g, h + ":id/dummyEditField")),
+                "qualified name maps");
+        check(("@" + g + ":id/x").equals(PluginResources.mapName(h, g, "@" + h + ":id/x")), "@ name maps");
+        check("android:id/text1".equals(PluginResources.mapName(h, g, "android:id/text1")), "framework name unchanged");
+        check((h + "x:id/a").equals(PluginResources.mapName(h, g, h + "x:id/a")), "prefix-only package unchanged");
+    }
+
     public static void main(String[] args) throws Exception {
         File root = Files.createTempDirectory("zb-launcher-contracts-").toFile();
         try {
             testAbiPriority();
+            testResourcePackageMapping();
             testNamesAndDelegation();
             testExtractionAndMetadata(root);
             testProxy(root);

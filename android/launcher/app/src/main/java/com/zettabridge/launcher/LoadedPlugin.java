@@ -65,7 +65,10 @@ final class LoadedPlugin {
         ApplicationInfo ai = PluginStore.applicationInfo(info, record);
         ai.uid = android.os.Process.myUid();
         // Public API; works for an APK that is not installed once sourceDir points at it.
-        Resources res = pm.getResourcesForApplication(ai);
+        // Wrapped so getIdentifier(name, type, getPackageName()) finds plugin resources: plugin
+        // contexts report the launcher package (see PluginResources).
+        Resources res = PluginResources.wrap(pm.getResourcesForApplication(ai), host.getPackageName(),
+                record.packageName);
 
         File codeCache = new File(host.getCodeCacheDir(), "plugins/" + record.packageName);
         if (!codeCache.isDirectory() && !codeCache.mkdirs()) {
