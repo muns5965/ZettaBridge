@@ -1,0 +1,84 @@
+name: StyleTap launcher debug APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/styletap-android17
+    paths:
+      - '.github/workflows/styletap-debug-apk.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  debug-apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - name: Check out sources and Dynarmic
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Prepare Linux build tools and Java
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake libboost-dev e2fsprogs unzip curl
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)"
+          fi
+          test -x "$SDKMANAGER"
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" --install "ndk;29.0.14206865" "platforms;android-35" "build-tools;35.0.0"
+          echo "ANDROID_NDK_HOME=$SDK_ROOT/ndk/29.0.14206865" >> "$GITHUB_ENV"
+          echo "NDK=$SDK_ROOT/ndk/29.0.14206865" >> "$GITHUB_ENV"
+          echo "NDK_HOST=linux-x86_64" >> "$GITHUB_ENV"
+      - name: Prepare Boost include path
+        run: |
+          test -f /usr/include/boost/icl/interval_map.hpp
+          mkdir -p build/boost-headers
+          ln -sfn /usr/include/boost build/boost-headers/boost
+      - name: Configure Android ARM64
+        run: |
+          cmake -S . -B build/android-arm64 -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-29 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DZB_BUILD_TESTS=OFF \
+            -DBoost_INCLUDE_DIR="$GITHUB_WORKSPACE/build/boost-headers"
+      - name: Build ARM64 bridge and proxy
+        run: cmake --build build/android-arm64 --target zbridge zbproxy --parallel 2
+      - name: Build ARM32 guest runtime
+        run: sh tools/build_guest.sh
+      - name: Extract verified ARM32 Android system libraries
+        run: sh tools/extract_sysroot.sh
+      - name: Assemble launcher runtime
+        run: sh tools/make_launcher_bundle.sh
+      - name: Build installable debug APK
+        working-directory: android/launcher
+        run: bash ./gradlew --no-daemon --stacktrace assembleDebug
+      - name: Check packaged APK
+        run: |
+          set -euo pipefail
+          APK=android/launcher/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          unzip -l "$APK" | grep 'lib/arm64-v8a/libzbridge.so'
+          unzip -l "$APK" | grep 'assets/zb/guest/zbhost'
+          unzip -l "$APK" | grep 'assets/zb/sysroot/system/bin/linker'
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: styletap-zettabridge-debug-apk
+          path: android/launcher/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
