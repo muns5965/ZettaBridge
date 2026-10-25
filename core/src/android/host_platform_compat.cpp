@@ -1,4 +1,7 @@
 #include "zb/host_platform_compat.h"
+#if defined(__ANDROID__)
+#include "bitmap_runtime.h"
+#endif
 
 #include <cerrno>
 
@@ -32,6 +35,9 @@ constexpr Fallback kFallbacks[] = {
 }  // namespace
 
 bool HostPlatformCompat::handle_host_call(std::uint32_t index, GuestThread& thread) {
+#if defined(__ANDROID__)
+    if (bitmap_ != nullptr && bitmap_->handle(index, thread)) return true;
+#endif
     for (const Fallback& fallback : kFallbacks) {
         if (fallback.index != index) continue;
         runtime_report().note_unimplemented_host_call(index, fallback.library, fallback.function);
