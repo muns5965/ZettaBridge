@@ -49,7 +49,8 @@ target_link_libraries(zbcore PUBLIC dynarmic)
 target_compile_options(zbcore PRIVATE -Wall -Wextra)
 
 if (ANDROID)
-    target_link_libraries(zbcore PUBLIC log)
+    target_sources(zbcore PRIVATE src/android/bitmap_runtime.cpp)
+    target_link_libraries(zbcore PUBLIC log jnigraphics)
 
     # libzbridge.so: the translator as loaded by the launcher's :guest process (Phase 3).
     # android/jni_env_backend.cpp: the JniBackend over the real JNIEnv, used by the JNI bridge (4d).
