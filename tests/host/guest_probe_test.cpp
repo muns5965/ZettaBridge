@@ -30,7 +30,7 @@ void build_object() {
     memory[kObject + kD0] = 0x1234;
     memory[kObject + kA7] = 0x00017ffc;
     memory[kObject + kPc] = 0x0001a2b4;
-    memory[kObject + 0xfc] = 0xdead2700;  // SR is the low half at 0xfc
+    memory[kObject + 0xfc] = 0xdead4e4f;  // the opcode is the low half at 0xfc (TRAP #15)
     memory[kObject + 0x154] = 0xa0f70000; // trap is the high half: 0x156
     memory[0x10003000] = 0x99;            // a readable word that is not an object
 }
@@ -42,7 +42,7 @@ void test_found_in_stack_words() {
     CHECK(m.has_value());
     CHECK(m->object == kObject);
     CHECK(m->pc == 0x0001a2b4);
-    CHECK(m->sr == 0x2700);
+    CHECK(m->opcode == 0x4e4f);
     CHECK(m->trap == 0xa0f7);
     CHECK(m->d0 == 0x1234);
     CHECK(m->a7 == 0x00017ffc);

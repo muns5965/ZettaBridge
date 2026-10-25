@@ -187,6 +187,29 @@ public final class LauncherContractsTest {
         check(!GuestWindowStyle.needsInsetPadding(35), "targetSdk 35 handles insets itself");
     }
 
+    private static void testStyleTapInputFilter() {
+        // StyleTap's own invalid range (TxtCharIsValid) and everything above the BMP are blocked.
+        check(!StyleTapInputFilter.isBlocked('a'), "ASCII passes");
+        check(!StyleTapInputFilter.isBlocked(0x00E9), "Latin-1 passes");
+        check(!StyleTapInputFilter.isBlocked(0x00FF), "0xFF passes");
+        check(StyleTapInputFilter.isBlocked(0x0100), "0x100 is blocked");
+        check(StyleTapInputFilter.isBlocked(0x3131), "Hangul jamo is blocked");
+        check(StyleTapInputFilter.isBlocked(0xAC00), "Hangul syllable is blocked");
+        check(StyleTapInputFilter.isBlocked(0xFF7F), "0xFF7F is blocked");
+        check(!StyleTapInputFilter.isBlocked(0xFF80), "0xFF80 passes (StyleTap treats it as valid)");
+        check(StyleTapInputFilter.isBlocked(0x1F600), "above the BMP is blocked");
+
+        java.util.Map<Integer, Integer> counts = new java.util.HashMap<>();
+        check(StyleTapInputFilter.strip("abc1", 0, 4, counts) == null, "nothing blocked: unchanged");
+        check("".equals(StyleTapInputFilter.strip("\uAC00", 0, 1, counts)), "a lone syllable is removed");
+        check("ab".equals(StyleTapInputFilter.strip("a\uAC00b", 0, 3, counts)), "blocked removed, rest kept");
+        check("".equals(StyleTapInputFilter.strip("\u3131", 0, 1, counts)), "composing jamo is removed");
+        check("x".equals(StyleTapInputFilter.strip("x\uD83D\uDE00", 0, 3, counts)), "a surrogate pair is one code point");
+        check("b".equals(StyleTapInputFilter.strip("a\uAC00b", 1, 3, counts)), "only the given range is filtered");
+        check(counts.get(0xAC00) == 3, "blocked code points are counted");
+        check(counts.get(0x1F600) == 1, "the pair counts once");
+    }
+
     public static void main(String[] args) throws Exception {
         File root = Files.createTempDirectory("zb-launcher-contracts-").toFile();
         try {
@@ -194,6 +217,7 @@ public final class LauncherContractsTest {
             testResourcePackageMapping();
             testTelephonyFallbackPolicy();
             testInsetPaddingPolicy();
+            testStyleTapInputFilter();
             testNamesAndDelegation();
             testExtractionAndMetadata(root);
             testProxy(root);

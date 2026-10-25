@@ -1,4 +1,5 @@
 #include "zb/library_runtime.h"
+#include "zb/hang_watchdog.h"
 
 #include <condition_variable>
 #include <cstdlib>
@@ -211,7 +212,9 @@ struct LibraryRuntime::Impl {
                 }
             }
             if (!command) {
+                set_thread_parked(thread.tid, true);
                 thread.park(token);
+                set_thread_parked(thread.tid, false);
                 continue;
             }
             command->done.set_value(execute(thread, *command));
@@ -288,6 +291,8 @@ struct LibraryRuntime::Impl {
                 }
             }
             if (published) carrier_cv.notify_all();
+            // Marked idle only while unleased: a borrower runs under this carrier's tid.
+            set_thread_parked(thread.tid, !leased);
             if (leased && !detached) {
                 // Host signals landing on this host thread go to the process signal target
                 // while the carrier's identity runs on the borrower.
@@ -296,6 +301,7 @@ struct LibraryRuntime::Impl {
             }
             thread.park(token);
         }
+        set_thread_parked(thread.tid, false);
         if (detached) Process::set_current_thread(&thread);
         thread.regs()[0] = 0;
         return true;

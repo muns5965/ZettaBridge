@@ -34,6 +34,7 @@ struct Slot {
     std::atomic<std::uint64_t> counter{0};
     std::atomic<std::uint32_t> pc{0};
     std::atomic<std::uint32_t> lr{0};
+    std::atomic<bool> parked{false};
     // Capture on request: seq odd while the owner writes.
     std::atomic<bool> capture_wanted{false};
     std::atomic<std::uint32_t> capture_seq{0};
@@ -135,6 +136,11 @@ bool latest_thread_capture(std::int32_t tid, std::uint32_t* words, std::uint32_t
     return false;
 }
 
+void set_thread_parked(std::int32_t tid, bool parked) {
+    if (tid == 0) return;
+    if (Slot* slot = find_slot(tid)) slot->parked.store(parked, std::memory_order_relaxed);
+}
+
 void request_thread_capture(std::int32_t tid) {
     if (Slot* slot = find_slot(tid)) slot->capture_wanted.store(true, std::memory_order_relaxed);
 }
@@ -161,6 +167,7 @@ std::vector<ThreadActivitySample> snapshot_thread_activity() {
         sample.in_progress = slot.in_progress.load(std::memory_order_relaxed);
         sample.pc = slot.pc.load(std::memory_order_relaxed);
         sample.lr = slot.lr.load(std::memory_order_relaxed);
+        sample.parked = slot.parked.load(std::memory_order_relaxed);
         out.push_back(sample);
     }
     return out;
@@ -296,10 +303,9 @@ const char* thread_state_name(ThreadState state) {
 
 ThreadState classify_thread(const ThreadActivitySample& sample, bool changed, std::uint64_t cpu_delta,
                             bool waiting, bool word_changed, bool wake_missed) {
-    // The library runtime's own parking: READY (0xFE00) on zbhost, PARK (0xFE01) on carriers.
-    if (sample.kind == ThreadActivityKind::kHostCall && (sample.id == 0xFE00 || sample.id == 0xFE01)) {
-        return ThreadState::kIdleService;
-    }
+    // Only the runtime's own mark counts: being inside READY or PARK also covers running a command
+    // or lending the carrier, which can hang like anything else.
+    if (sample.parked) return ThreadState::kIdleService;
     if (waiting) {
         if (word_changed || wake_missed) return ThreadState::kLostWakeSuspect;
         if (!changed) return ThreadState::kIdleWait;
@@ -415,8 +421,8 @@ bool HangWatchdog::sample(Clock::time_point now) {
                         if (state.m68k_pcs.size() > 6) state.m68k_pcs.erase(state.m68k_pcs.begin());
                     }
                     char text[160];
-                    std::snprintf(text, sizeof text, " m68k: pc=0x%x sr=0x%04x trap=0x%04x d0=0x%x a7=0x%x",
-                                  m->pc, m->sr, m->trap, m->d0, m->a7);
+                    std::snprintf(text, sizeof text, " m68k: pc=0x%x op=0x%04x trap=0x%04x d0=0x%x a7=0x%x",
+                                  m->pc, m->opcode, m->trap, m->d0, m->a7);
                     live += text;
                     if (state.m68k_pcs.size() > 1) {
                         live += " recent-68k-pc=[";

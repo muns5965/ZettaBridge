@@ -23,7 +23,9 @@ const GuestInspector* guest_inspector();
 // StyleTap 0.8.0034's 68K CPU object (class M68K in libStyleTap.so), for telling a loop in the
 // emulated Palm program from one in StyleTap's own ARM code. Layout from M68K::M68K and
 // M68K::CopyToEmulationState: vtable pointer at +0, D0-D7 at +0x8c, A0-A7 at +0xac, PC at +0xcc,
-// SR (16 bit) at +0xfc, current or last Palm OS trap number (16 bit) at +0x156. Inert for any
+// the last recorded 68K opcode (16 bit) at +0xfc (M68K::executeOneInstruction prints it as the
+// illegal opcode; 0x4E4F is TRAP #15, a Palm OS system call), current or last Palm OS trap number
+// (16 bit) at +0x156. Inert for any
 // other guest: the object is only recognised by StyleTap's vtable address.
 namespace styletap {
 constexpr const char* kLibrary = "libStyleTap.so";
@@ -31,14 +33,14 @@ constexpr std::uint32_t kM68kVtable = 0x192fc8;  // _ZTV4M68K; objects point 8 b
 constexpr std::uint32_t kD0 = 0x8c;
 constexpr std::uint32_t kA7 = 0xac + 7 * 4;
 constexpr std::uint32_t kPc = 0xcc;
-constexpr std::uint32_t kSr = 0xfc;
+constexpr std::uint32_t kOpcode = 0xfc;
 constexpr std::uint32_t kTrap = 0x156;
 }  // namespace styletap
 
 struct M68kState {
     std::uint32_t object = 0;  // guest address of the M68K object
     std::uint32_t pc = 0;      // 68K program counter (a Palm address)
-    std::uint16_t sr = 0;
+    std::uint16_t opcode = 0;  // last recorded 68K opcode, not necessarily the one at pc
     std::uint16_t trap = 0;    // Palm OS trap (0xA0xx..) running now or last
     std::uint32_t d0 = 0;
     std::uint32_t a7 = 0;

@@ -33,6 +33,8 @@ final class PluginRecord {
     boolean preciseFaults = false;
     /** Debugging: GL instrumentation (framebuffer readbacks, per-draw pixel diffs). Very slow. */
     boolean diagnostics = false;
+    /** StyleTap only: drop characters its Palm text code corrupts (StyleTapInputFilter). */
+    boolean styletapInputFilter = true;
     /** Every ABI directory found under lib/ in the APK. */
     final Set<String> abis = new TreeSet<>();
 
@@ -108,6 +110,7 @@ final class PluginRecord {
         p.setProperty("hideAds", Boolean.toString(hideAds));
         p.setProperty("preciseFaults", Boolean.toString(preciseFaults));
         p.setProperty("diagnostics", Boolean.toString(diagnostics));
+        p.setProperty("styletapInputFilter", Boolean.toString(styletapInputFilter));
         try (OutputStream out = new FileOutputStream(new File(dir, "meta.properties"))) {
             p.store(out, "ZettaBridge plugin");
         }
@@ -140,6 +143,7 @@ final class PluginRecord {
         r.hideAds = !"false".equals(p.getProperty("hideAds"));
         r.preciseFaults = "true".equals(p.getProperty("preciseFaults"));
         r.diagnostics = "true".equals(p.getProperty("diagnostics"));
+        r.styletapInputFilter = !"false".equals(p.getProperty("styletapInputFilter"));
         // Phase 0 arm64 imports are already complete. Old 32-bit records must be reimported so
         // every library passes through the non-atomic ELF fixer before metadata says ready.
         if (r.selectedAbi == null && r.abis.contains(ABI_ARM64)) r.selectedAbi = ABI_ARM64;

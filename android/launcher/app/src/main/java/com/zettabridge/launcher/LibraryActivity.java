@@ -211,23 +211,46 @@ public class LibraryActivity extends Activity {
     }
 
     private void showActions(PluginRecord r) {
+        final java.util.List<String> items = new java.util.ArrayList<>();
+        final java.util.List<Runnable> actions = new java.util.ArrayList<>();
+        items.add("Launch");
+        actions.add(() -> launch(r));
+        items.add("Last run report");
+        actions.add(() -> showRuntimeReport(r));
+        items.add("Pin shortcut");
+        actions.add(() -> pinShortcut(r));
+        items.add(r.hideAds ? "Show ads" : "Hide ads");
+        actions.add(() -> toggleAds(r));
+        items.add(r.preciseFaults ? "Precise faults: on" : "Precise faults (slow)");
+        actions.add(() -> togglePreciseFaults(r));
+        items.add(r.diagnostics ? "GL diagnostics: on" : "GL diagnostics (slow)");
+        actions.add(() -> toggleDiagnostics(r));
+        if (StyleTapInputFilter.PACKAGE.equals(r.packageName)) {
+            items.add(r.styletapInputFilter ? "Input filter: on" : "Input filter: off (debug)");
+            actions.add(() -> toggleStyleTapInputFilter(r));
+        }
+        items.add("Delete");
+        actions.add(() -> confirmDelete(r));
         new AlertDialog.Builder(this)
                 .setTitle(r.label)
-                .setItems(new String[] {"Launch", "Last run report", "Pin shortcut",
-                                        r.hideAds ? "Show ads" : "Hide ads",
-                                        r.preciseFaults ? "Precise faults: on" : "Precise faults (slow)",
-                                        r.diagnostics ? "GL diagnostics: on" : "GL diagnostics (slow)",
-                                        "Delete"},
-                        (dialog, which) -> {
-                            if (which == 0) launch(r);
-                            if (which == 1) showRuntimeReport(r);
-                            if (which == 2) pinShortcut(r);
-                            if (which == 3) toggleAds(r);
-                            if (which == 4) togglePreciseFaults(r);
-                            if (which == 5) toggleDiagnostics(r);
-                            if (which == 6) confirmDelete(r);
-                        })
+                .setItems(items.toArray(new String[0]), (dialog, which) -> actions.get(which).run())
                 .show();
+    }
+
+    /**
+     * StyleTap's input filter keeps characters its Palm text code corrupts (Hangul hangs it) out of
+     * its input field. Off reproduces the original behaviour for debugging. Applies on next start.
+     */
+    private void toggleStyleTapInputFilter(PluginRecord r) {
+        r.styletapInputFilter = !r.styletapInputFilter;
+        try {
+            r.save();
+        } catch (IOException e) {
+            Diagnostics.report(this, "cannot save the input filter setting of " + r.label, e, false);
+            return;
+        }
+        Toast.makeText(this, (r.styletapInputFilter ? "Input filter on" : "Input filter off")
+                + ". Restart the game to apply.", Toast.LENGTH_LONG).show();
     }
 
     /** Ads are hidden per plugin; it takes effect the next time the plugin process starts. */

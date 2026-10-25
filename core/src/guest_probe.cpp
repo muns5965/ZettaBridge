@@ -33,16 +33,16 @@ std::optional<M68kState> find_styletap_m68k(const std::uint32_t* words, std::siz
         const std::optional<std::uint32_t> first = read_u32(object);
         if (!first || *first != vtable) continue;
         const auto pc = read_u32(object + kPc);
-        const auto sr = read_u32(object + (kSr & ~3u));
+        const auto op = read_u32(object + (kOpcode & ~3u));
         const auto trap = read_u32(object + (kTrap & ~3u));
         const auto d0 = read_u32(object + kD0);
         const auto a7 = read_u32(object + kA7);
-        if (!pc || !sr || !trap || !d0 || !a7) continue;
+        if (!pc || !op || !trap || !d0 || !a7) continue;
         M68kState state;
         state.object = object;
         state.pc = *pc;
         // Little-endian guest: a 16-bit field at an offset that is 2 mod 4 is the high half.
-        state.sr = static_cast<std::uint16_t>((kSr & 2) ? *sr >> 16 : *sr);
+        state.opcode = static_cast<std::uint16_t>((kOpcode & 2) ? *op >> 16 : *op);
         state.trap = static_cast<std::uint16_t>((kTrap & 2) ? *trap >> 16 : *trap);
         state.d0 = *d0;
         state.a7 = *a7;

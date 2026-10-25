@@ -62,6 +62,7 @@ final class GuestInstrumentation extends Instrumentation {
             throw error;
         }
         GuestWindowStyle.afterCreate(activity);
+        StyleTapInputFilter.attach(activity, runtime.pluginOf(activity), runtime.host());
     }
 
     @Override
@@ -74,6 +75,7 @@ final class GuestInstrumentation extends Instrumentation {
             throw error;
         }
         GuestWindowStyle.afterCreate(activity);
+        StyleTapInputFilter.attach(activity, runtime.pluginOf(activity), runtime.host());
     }
 
     /**

@@ -34,6 +34,12 @@ void record_thread_activity(std::int32_t tid, ThreadActivityKind kind, std::uint
 // that simply stopped calling out.
 void record_thread_activity_done(std::int32_t tid);
 
+// The library runtime marks a thread while it sleeps for work in its own wait (the zbhost service
+// queue, an unleased carrier). This, and not the last call recorded, is what makes a thread
+// idle-service: a service thread running a command, or a leased carrier whose identity a borrower
+// is using, is not marked and is judged by what it does.
+void set_thread_parked(std::int32_t tid, bool parked);
+
 // Register and stack capture on request. The watchdog asks for one per busy thread; the thread
 // itself copies r4-r11 and its nearest stack words at its next syscall, so no thread's CPU state
 // is ever read from another thread.
@@ -53,6 +59,7 @@ struct ThreadActivitySample {
     bool in_progress = false;  // still inside the recorded host call or syscall
     std::uint32_t pc = 0;
     std::uint32_t lr = 0;
+    bool parked = false;  // set_thread_parked
 };
 
 // What a thread is doing between two samples. Waits that are part of normal operation (a
@@ -61,7 +68,7 @@ struct ThreadActivitySample {
 // notes nor use up the note budget before the real hang happens.
 enum class ThreadState : std::uint8_t {
     kProgressing,      // left translated code again since the last sample
-    kIdleService,      // the library runtime's READY/PARK host calls
+    kIdleService,      // asleep in the library runtime's own wait for work (set_thread_parked)
     kIdleWait,         // in FUTEX_WAIT, the word unchanged and no wake issued on it since
     kLostWakeSuspect,  // in FUTEX_WAIT, but the word changed or a wake on it woke nobody
     kSpinning,         // no exit from translated code, CPU still climbing

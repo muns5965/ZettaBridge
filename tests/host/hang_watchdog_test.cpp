@@ -111,9 +111,17 @@ int main() {
         zb::ThreadActivitySample s;
         s.kind = zb::ThreadActivityKind::kHostCall;
         s.id = 0xFE00;
+        // Inside READY but not parked: running a command, judged like any other thread.
+        s.in_progress = true;
+        CHECK(zb::classify_thread(s, false, 0, false, false, false) == zb::ThreadState::kStalled);
+        // Parked by the runtime: idle, whatever the last recorded call was.
+        s.parked = true;
         CHECK(zb::classify_thread(s, false, 0, false, false, false) == zb::ThreadState::kIdleService);
-        s.id = 0xFE01;
+        s.kind = zb::ThreadActivityKind::kSyscall;
+        s.id = 126;  // rt_sigprocmask from the last command
+        s.in_progress = false;
         CHECK(zb::classify_thread(s, false, 0, false, false, false) == zb::ThreadState::kIdleService);
+        s.parked = false;
         s.kind = zb::ThreadActivityKind::kSyscall;
         s.id = 240;
         s.in_progress = true;
@@ -137,6 +145,7 @@ int main() {
         service.id = 0xFE00;
         service.counter = 9;
         service.in_progress = true;
+        service.parked = true;
         out.push_back(service);
         return out;
     });
