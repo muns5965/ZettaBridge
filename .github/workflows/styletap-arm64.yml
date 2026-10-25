@@ -28,12 +28,19 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build cmake libboost-dev
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-      - name: Install Android NDK r29
+      - name: Install Android NDK r29 using runner SDK
+        shell: bash
         run: |
-          sdkmanager --install "ndk;29.0.14206865"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)"
+          fi
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses > /dev/null || test "${PIPESTATUS[1]}" -eq 0
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" --install "ndk;29.0.14206865"
+          echo "ANDROID_NDK_HOME=$SDK_ROOT/ndk/29.0.14206865" >> "$GITHUB_ENV"
       - name: Apply Dynarmic source patches
         run: |
           git -C third_party/dynarmic apply --check ../../patches/dynarmic-0001-thumb32-armv8.patch ../../patches/dynarmic-0002-asimd-narrowing.patch
