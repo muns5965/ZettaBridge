@@ -49,6 +49,15 @@ jobs:
             -DBoost_INCLUDE_DIR=/usr/include
       - name: Build libzbridge.so
         run: cmake --build build/android-arm64 --target zbridge --parallel 2
+      - name: Verify Android ARM64 ELF and JNI graphics dependency
+        run: |
+          LIB=build/android-arm64/core/libzbridge.so
+          test -s "$LIB"
+          READELF="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          "$READELF" -h "$LIB" | tee /tmp/styletap-elf-header.txt
+          grep -q 'AArch64' /tmp/styletap-elf-header.txt
+          "$READELF" -d "$LIB" | tee /tmp/styletap-elf-dynamic.txt
+          grep -q 'libjnigraphics.so' /tmp/styletap-elf-dynamic.txt
       - name: Upload native library
         uses: actions/upload-artifact@v4
         with:
