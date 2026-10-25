@@ -11,6 +11,7 @@
 #include <cstring>
 #include <thread>
 
+#include "zb/futex_trace.h"
 #include "zb/host_jni.h"
 #include "zb/runtime_report.h"
 #include "zb/syscalls.h"
@@ -276,6 +277,12 @@ bool HangWatchdog::sample(Clock::time_point now) {
         ++shown;
     }
     value += " | recent-jni: " + jni_recent_calls();
+    // What each stuck futex sleeper waits on, once per thread (the wait does not change while it
+    // stays stuck; a new wait after progress gets a fresh line under the same key).
+    for (const State* state : stuck) {
+        const std::string futex = futex_trace_describe(state->tid);
+        if (!futex.empty()) runtime_report().note_watch_detail("futex-" + std::to_string(state->tid), futex);
+    }
     // Once, with the first report: the whole thread census is long and does not change much.
     static bool census_written = false;
     if (!census_written) {

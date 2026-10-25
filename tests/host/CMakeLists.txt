@@ -1,5 +1,6 @@
 set(ZB_HOST_TESTS
     fault_pc_test
+    futex_trace_test
     egl_marshal_test
     configuration_test
     elf_fixups_test

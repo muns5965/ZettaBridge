@@ -40,6 +40,7 @@
 
 #include "gen/syscall_nrs_arm.h"
 #include "zb/elf_fixups.h"
+#include "zb/futex_trace.h"
 #include "zb/guest_abi.h"
 #include "zb/net_ioctl.h"
 #include "zb/guest_memory.h"
@@ -730,6 +731,42 @@ std::int32_t sys_uname(Ctx& c) {
     return write_guest(c.mem, c.a[0], u) ? 0 : -EFAULT;
 }
 
+std::int32_t trace_tid(GuestThread& thread) {
+    return thread.tid != 0 ? thread.tid : static_cast<std::int32_t>(::syscall(SYS_gettid));
+}
+
+// Diagnostics only (futex_trace.h): records the wait for the hang watchdog, never changes it.
+struct FutexWaitTrace {
+    std::int32_t tid;
+    FutexWaitTrace(Ctx& c, std::uint8_t* word) : tid(trace_tid(c.thread)) {
+        static std::once_flag once;
+        Process* proc = &c.proc;
+        std::call_once(once, [proc] {
+            futex_trace_set_describer([proc](std::uint32_t addr) -> std::string {
+                std::unique_lock<std::mutex> lock(proc->mm_mutex(), std::try_to_lock);
+                if (!lock.owns_lock()) return std::string();
+                std::string d = proc->describe_address(addr);
+                if (d == "?") return std::string();
+                const std::size_t slash = d.rfind('/', d.find(' '));
+                return slash == std::string::npos ? d : d.substr(slash + 1);
+            });
+        });
+        const auto& r = c.thread.regs();
+        // The nearest stack words, shrinking the window when the stack top is close.
+        const std::uint32_t* stack = nullptr;
+        std::uint32_t words = kFutexStackWords;
+        for (; words > 0; words /= 2) {
+            if (std::uint8_t* p = c.mem.host_ptr(r[13], words * 4, kPageRead)) {
+                stack = reinterpret_cast<const std::uint32_t*>(p);
+                break;
+            }
+        }
+        futex_trace_wait_begin(tid, c.a[0], reinterpret_cast<const volatile std::uint32_t*>(word),
+                               c.a[1], c.a[2], r[15], r[14], r[13], stack, words);
+    }
+    ~FutexWaitTrace() { futex_trace_wait_end(tid); }
+};
+
 std::int32_t sys_futex(Ctx& c, bool time64) {
     const int op = static_cast<int>(c.a[1]);
     const int cmd = op & FUTEX_CMD_MASK;
@@ -745,6 +782,7 @@ std::int32_t sys_futex(Ctx& c, bool time64) {
             tsp = &ts;
         }
         BlockingSection blocking(c.thread);
+        FutexWaitTrace trace(c, uaddr);
         for (;;) {
             // Ordered against post_signal(): the flag above is set before this check, and a poster
             // sets the pending bit before it reads the flag, so a signal is never missed here.
@@ -754,11 +792,15 @@ std::int32_t sys_futex(Ctx& c, bool time64) {
             if (has_deliverable_signal(c.thread)) return -EINTR;
             // Interrupted by our own wakeup with nothing to deliver: wait again. A timed wait
             // restarts with its full timeout, as a restarted guest wait would.
+            futex_trace_wait_rewait(trace.tid);
         }
     }
     case FUTEX_WAKE:
-    case FUTEX_WAKE_BITSET:
-        return result_of(::syscall(SYS_futex, uaddr, op, c.a[2], nullptr, nullptr, c.a[5]));
+    case FUTEX_WAKE_BITSET: {
+        const std::int32_t res = result_of(::syscall(SYS_futex, uaddr, op, c.a[2], nullptr, nullptr, c.a[5]));
+        futex_trace_wake(trace_tid(c.thread), c.a[0], static_cast<std::uint32_t>(op), c.a[2], res);
+        return res;
+    }
     default:
         if (c.proc.first_time(kSeenFutex | static_cast<std::uint32_t>(cmd))) log("unsupported futex command %d", cmd);
         return -ENOSYS;
