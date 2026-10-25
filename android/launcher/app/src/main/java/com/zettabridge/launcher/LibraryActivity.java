@@ -288,7 +288,8 @@ public class LibraryActivity extends Activity {
             return;
         }
         File file = Diagnostics.runtimeReportFile(this);
-        String text = report + (file != null ? "\nfile: " + file.getAbsolutePath() + "\n" : "");
+        String text = report + (file != null ? "\nfile: " + file.getAbsolutePath() + "\n" : "")
+                + Diagnostics.readCrashDiagnostics(this);
         boolean copied = Diagnostics.copy(this, "ZettaBridge run report", text);
 
         TextView view = new TextView(this);
