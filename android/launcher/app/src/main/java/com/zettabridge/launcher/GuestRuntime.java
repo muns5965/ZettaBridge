@@ -10,6 +10,7 @@ import android.content.pm.ActivityInfo;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.ContextThemeWrapper;
+import android.view.LayoutInflater;
 import android.view.Window;
 
 import java.lang.reflect.Field;
@@ -234,6 +235,21 @@ final class GuestRuntime {
 
         int theme = ai != null ? ai.getThemeResource() : p.appInfo.theme;
         activity.setTheme(theme != 0 ? theme : GuestWindowStyle.defaultTheme(p.appInfo.targetSdkVersion));
+
+        // Activity.attach() constructs PhoneWindow before the plugin context is installed.
+        // Its cached inflater still targets the launcher stub, so setContentView(layoutId)
+        // may inflate the wrong resource tree and findViewById() returns null.
+        // Replace that cache only after applying the plugin theme.
+        Window pluginWindow = activity.getWindow();
+        if (pluginWindow != null) {
+            LayoutInflater pluginInflater = LayoutInflater.from(activity).cloneInContext(activity);
+            if (!Reflect.trySet(pluginWindow.getClass(), pluginWindow,
+                    "mLayoutInflater", pluginInflater)) {
+                Diagnostics.report(host, "plugin window inflater could not be replaced",
+                        new IllegalStateException(pluginWindow.getClass().getName()), false);
+            }
+        }
+
 
         GuestWindowStyle.apply(activity, p.record != null && p.record.isTranslated());
         if (p.record != null && p.record.hideAds) AdHider.attach(activity);
