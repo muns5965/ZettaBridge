@@ -11,11 +11,9 @@ if [ ! -f "$ANDROID_JAR" ]; then
     exit 1
 fi
 
-javac -encoding UTF-8 -source 17 -target 17 -cp "$ANDROID_JAR" -d "$OUT" \
-    "$ROOT/android/launcher/app/src/main/java/com/zettabridge/launcher/PluginFiles.java" \
-    "$ROOT/android/launcher/app/src/main/java/com/zettabridge/launcher/PluginClassLoader.java" \
-    "$ROOT/android/launcher/app/src/main/java/com/zettabridge/launcher/PluginRecord.java" \
-    "$ROOT/android/launcher/app/src/main/java/com/zettabridge/launcher/PluginResources.java" \
-    "$ROOT/android/launcher/app/src/main/java/com/zettabridge/launcher/Reflect.java" \
-    "$ROOT/tests/launcher/LauncherContractsTest.java"
+find "$ROOT/android/launcher/app/src/main/java" "$ROOT/tests/launcher/stubs" -name '*.java' -print \
+    | LC_ALL=C sort > "$OUT.sources"
+echo "$ROOT/tests/launcher/LauncherContractsTest.java" >> "$OUT.sources"
+javac -encoding UTF-8 -source 17 -target 17 -cp "$ANDROID_JAR" -d "$OUT" @"$OUT.sources"
+rm -f "$OUT.sources"
 java -ea -cp "$OUT:$ANDROID_JAR" com.zettabridge.launcher.LauncherContractsTest

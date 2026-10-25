@@ -70,6 +70,7 @@ final class GuestRuntime {
             installed = true;
             Log.i(TAG, "guest Instrumentation installed");
             PackageManagerHook.install(app, this);
+            TelephonyHook.install(app, this);
         } catch (ReflectiveOperationException | RuntimeException e) {
             Log.e(TAG, "cannot install the guest Instrumentation; plugins will not launch", e);
         }

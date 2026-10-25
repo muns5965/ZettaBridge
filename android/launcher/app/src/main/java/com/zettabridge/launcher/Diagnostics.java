@@ -154,6 +154,12 @@ final class Diagnostics {
         return text;
     }
 
+    /** Appends one timestamped line to the error file, shown in the Last run report. */
+    static void note(Context context, String line) {
+        Log.i(TAG, line);
+        appendToFile(context, new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date()) + " " + line);
+    }
+
     /** Uncaught exceptions of a process are appended to the error file before the default handler runs. */
     static void installCrashRecorder(Context context) {
         final Context app = context.getApplicationContext() != null ? context.getApplicationContext() : context;

@@ -164,11 +164,29 @@ public final class LauncherContractsTest {
         check((h + "x:id/a").equals(PluginResources.mapName(h, g, h + "x:id/a")), "prefix-only package unchanged");
     }
 
+    private static void testTelephonyFallbackPolicy() {
+        String[] phone = {"android.permission.INTERNET", "android.permission.READ_PHONE_STATE"};
+        String[] none = {"android.permission.INTERNET"};
+        SecurityException denied = new SecurityException("getDeviceId: uid does not meet the requirements");
+        check(TelephonyHook.isCandidate("getDeviceIdWithFeature", String.class, denied), "target call is a candidate");
+        check(!TelephonyHook.isCandidate("getImeiForSlot", String.class, denied), "other identifier calls pass");
+        check(!TelephonyHook.isCandidate("getDeviceId", String.class, denied), "only the observed method");
+        check(!TelephonyHook.isCandidate("getDeviceIdWithFeature", String.class,
+                new IllegalStateException()), "other exceptions pass");
+        check(!TelephonyHook.isCandidate("getDeviceIdWithFeature", int.class, denied), "non-String return passes");
+        check(TelephonyHook.legacyNull(11, phone), "targetSdk 11 with READ_PHONE_STATE gets null");
+        check(TelephonyHook.legacyNull(28, phone), "targetSdk 28 with READ_PHONE_STATE gets null");
+        check(!TelephonyHook.legacyNull(29, phone), "targetSdk 29 keeps the exception");
+        check(!TelephonyHook.legacyNull(11, none), "no READ_PHONE_STATE keeps the exception");
+        check(!TelephonyHook.legacyNull(11, null), "no permissions keeps the exception");
+    }
+
     public static void main(String[] args) throws Exception {
         File root = Files.createTempDirectory("zb-launcher-contracts-").toFile();
         try {
             testAbiPriority();
             testResourcePackageMapping();
+            testTelephonyFallbackPolicy();
             testNamesAndDelegation();
             testExtractionAndMetadata(root);
             testProxy(root);
