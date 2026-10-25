@@ -43,6 +43,20 @@ jobs:
           echo "ANDROID_NDK_HOME=$SDK_ROOT/ndk/29.0.14206865" >> "$GITHUB_ENV"
           echo "NDK=$SDK_ROOT/ndk/29.0.14206865" >> "$GITHUB_ENV"
           echo "NDK_HOST=linux-x86_64" >> "$GITHUB_ENV"
+      - name: Apply required Dynarmic compatibility patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          PATCH_DIR="$GITHUB_WORKSPACE/third_party/patches"
+          PATCHES=(
+            "$PATCH_DIR/dynarmic-0001-thumb32-armv8.patch"
+            "$PATCH_DIR/dynarmic-0002-asimd-narrowing.patch"
+          )
+          for patch in "${PATCHES[@]}"; do
+            test -s "$patch" || { echo "::error::Missing required patch: $patch"; exit 1; }
+          done
+          git -C third_party/dynarmic apply --check "${PATCHES[@]}"
+          git -C third_party/dynarmic apply "${PATCHES[@]}"
       - name: Prepare Boost include path
         run: |
           test -f /usr/include/boost/icl/interval_map.hpp
