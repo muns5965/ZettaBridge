@@ -3,6 +3,11 @@ package com.zettabridge.launcher;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.app.ActivityManager;
+import android.app.ApplicationExitInfo;
+import android.os.Build;
+import java.io.InputStream;
+import java.util.List;
 import android.util.Log;
 
 import com.zettabridge.core.ZBridge;
@@ -66,6 +71,64 @@ final class Diagnostics {
             Log.w(TAG, "cannot read the runtime report: " + e);
             return null;
         }
+    }
+
+    /** ADB-free diagnostics from Java uncaught handlers and Android process exit history. */
+    static String readCrashDiagnostics(Context context) {
+        StringBuilder out = new StringBuilder();
+        File dir = context.getExternalFilesDir(null);
+        File errors = dir == null ? null : new File(dir, "zb-errors.txt");
+        if (errors != null && errors.isFile()) {
+            try {
+                byte[] data = Files.readAllBytes(errors.toPath());
+                int start = Math.max(0, data.length - 24000);
+                out.append("\n--- Java crash/error log (most recent bytes) ---\n");
+                out.append(new String(data, start, data.length - start, StandardCharsets.UTF_8));
+            } catch (IOException | RuntimeException e) {
+                out.append("\nerror-log-read-failed: ").append(e).append('\n');
+            }
+        } else {
+            out.append("\nJava crash log: (none)\n");
+        }
+        if (Build.VERSION.SDK_INT >= 30) {
+            out.append("\n--- Android recent process exits ---\n");
+            try {
+                ActivityManager am = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+                List<ApplicationExitInfo> exits = am == null ? null :
+                        am.getHistoricalProcessExitReasons(context.getPackageName(), 0, 8);
+                if (exits == null || exits.isEmpty()) {
+                    out.append("(none)\n");
+                } else {
+                    for (ApplicationExitInfo exit : exits) {
+                        out.append("process: ").append(exit.getProcessName())
+                                .append(" reason=").append(exit.getReason())
+                                .append(" status=").append(exit.getStatus())
+                                .append(" time=").append(exit.getTimestamp())
+                                .append(" description=").append(exit.getDescription())
+                                .append('\n');
+                        if (exit.getReason() == ApplicationExitInfo.REASON_CRASH_NATIVE ||
+                                exit.getReason() == ApplicationExitInfo.REASON_ANR) {
+                            try (InputStream trace = exit.getTraceInputStream()) {
+                                if (trace != null) {
+                                    byte[] data = new byte[12000];
+                                    int n = trace.read(data);
+                                    if (n > 0) {
+                                        out.append("exit-trace (truncated):\n")
+                                                .append(new String(data, 0, n, StandardCharsets.UTF_8))
+                                                .append('\n');
+                                    }
+                                }
+                            } catch (IOException | RuntimeException e) {
+                                out.append("exit-trace-unavailable: ").append(e).append('\n');
+                            }
+                        }
+                    }
+                }
+            } catch (RuntimeException e) {
+                out.append("process-exit-history-unavailable: ").append(e).append('\n');
+            }
+        }
+        return out.toString();
     }
 
     /** Copies text to the clipboard under `label`; false when the clipboard is unavailable. */
