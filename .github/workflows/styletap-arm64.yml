@@ -57,6 +57,14 @@ jobs:
             echo "::warning::Dynarmic patch files are absent from this fork; compiling the pinned submodule without these patches."
             printf 'Missing patches: %s\n' "${PATCHES[@]}"
           fi
+      - name: Prepare Boost headers for Android cross-compilation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f /usr/include/boost/icl/interval_map.hpp
+          mkdir -p build/boost-headers
+          ln -sfn /usr/include/boost build/boost-headers/boost
+          test -f build/boost-headers/boost/icl/interval_map.hpp
       - name: Configure Android ARM64
         run: |
           cmake -S . -B build/android-arm64 -G Ninja \
@@ -65,7 +73,7 @@ jobs:
             -DANDROID_PLATFORM=android-29 \
             -DCMAKE_BUILD_TYPE=Release \
             -DZB_BUILD_TESTS=OFF \
-            -DBoost_INCLUDE_DIR=/usr/include
+            -DBoost_INCLUDE_DIR="$GITHUB_WORKSPACE/build/boost-headers"
       - name: Build libzbridge.so
         run: cmake --build build/android-arm64 --target zbridge --parallel 2
       - name: Verify Android ARM64 ELF and JNI graphics dependency
