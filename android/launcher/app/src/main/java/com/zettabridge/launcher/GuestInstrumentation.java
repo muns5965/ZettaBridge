@@ -6,6 +6,11 @@ import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.content.res.Resources;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.Window;
+import java.util.ArrayList;
 import android.os.PersistableBundle;
 import android.util.Log;
 
@@ -44,15 +49,78 @@ final class GuestInstrumentation extends Instrumentation {
     @Override
     public void callActivityOnCreate(Activity activity, Bundle icicle) {
         runtime.prepareActivity(activity, icicle);
-        base.callActivityOnCreate(activity, icicle);
+        try {
+            base.callActivityOnCreate(activity, icicle);
+        } catch (RuntimeException | Error error) {
+            diagnoseViewCrash(activity, error);
+            throw error;
+        }
         GuestWindowStyle.afterCreate(activity);
     }
 
     @Override
     public void callActivityOnCreate(Activity activity, Bundle icicle, PersistableBundle persistentState) {
         runtime.prepareActivity(activity, icicle);
-        base.callActivityOnCreate(activity, icicle, persistentState);
+        try {
+            base.callActivityOnCreate(activity, icicle, persistentState);
+        } catch (RuntimeException | Error error) {
+            diagnoseViewCrash(activity, error);
+            throw error;
+        }
         GuestWindowStyle.afterCreate(activity);
+    }
+
+    /**
+     * Record the plugin resource/view mismatch before ActivityThread terminates the guest.
+     * Does not mutate the Activity or attempt to fabricate missing views.
+     */
+    private void diagnoseViewCrash(Activity activity, Throwable crash) {
+        if (!"com.StyleTap.StyleTap".equals(activity.getPackageName())
+                && !activity.getClass().getName().startsWith("com.StyleTap.StyleTap.")) return;
+        StringBuilder detail = new StringBuilder("StyleTap view diagnostics: ");
+        try {
+            Resources res = activity.getResources();
+            String pkg = activity.getClass().getPackage().getName();
+            int id = res.getIdentifier("dummyEditField", "id", pkg);
+            detail.append("activity=").append(activity.getClass().getName())
+                    .append(" contextPackage=").append(activity.getPackageName())
+                    .append(" resourceClass=").append(res.getClass().getName())
+                    .append(" dummyEditFieldId=0x").append(Integer.toHexString(id));
+            View view = id == 0 ? null : activity.findViewById(id);
+            detail.append(" found=").append(view == null ? "null" : view.getClass().getName());
+            Window window = activity.getWindow();
+            View decor = window == null ? null : window.peekDecorView();
+            detail.append(" decor=").append(decor == null ? "null" : decor.getClass().getName());
+            if (decor != null) {
+                ArrayList<View> pending = new ArrayList<>();
+                pending.add(decor);
+                int count = 0;
+                while (!pending.isEmpty() && count < 150) {
+                    View v = pending.remove(pending.size() - 1);
+                    count++;
+                    int vid = v.getId();
+                    if (vid != View.NO_ID) {
+                        String name;
+                        try { name = res.getResourceEntryName(vid); }
+                        catch (Resources.NotFoundException ex) { name = "unknown"; }
+                        if (name.toLowerCase(java.util.Locale.ROOT).contains("dummy")
+                                || v.getClass().getName().contains("DummyEditText")) {
+                            detail.append(" candidate=").append(v.getClass().getName())
+                                    .append("/0x").append(Integer.toHexString(vid))
+                                    .append("/").append(name);
+                        }
+                    }
+                    if (v instanceof ViewGroup) {
+                        ViewGroup group = (ViewGroup) v;
+                        for (int i = 0; i < group.getChildCount(); ++i) pending.add(group.getChildAt(i));
+                    }
+                }
+                detail.append(" scanned=").append(count);
+            }
+        } catch (Throwable e) {
+            detail.append(" diagnostic-error=").append(e);
+        }
+        Diagnostics.report(activity, detail.toString(), crash, false);
     }
 
     @Override
