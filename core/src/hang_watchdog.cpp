@@ -31,19 +31,24 @@ struct Slot {
     std::atomic<std::uint8_t> kind{static_cast<std::uint8_t>(ThreadActivityKind::kNone)};
     std::atomic<std::uint32_t> id{0};
     std::atomic<std::uint64_t> counter{0};
+    std::atomic<std::uint32_t> pc{0};
+    std::atomic<std::uint32_t> lr{0};
 };
 
 Slot g_slots[kMaxSlots];
 
 }  // namespace
 
-void record_thread_activity(std::int32_t tid, ThreadActivityKind kind, std::uint32_t id) {
+void record_thread_activity(std::int32_t tid, ThreadActivityKind kind, std::uint32_t id, std::uint32_t pc,
+                            std::uint32_t lr) {
     if (tid == 0) return;
     // This runs on every guest syscall and host call, so the common path must not scan the table:
     // each thread remembers its own slot after claiming it once.
     static thread_local Slot* mine = nullptr;
     static thread_local std::int32_t mine_tid = 0;
     if (mine != nullptr && mine_tid == tid) {
+        mine->pc.store(pc, std::memory_order_relaxed);
+        mine->lr.store(lr, std::memory_order_relaxed);
         mine->kind.store(static_cast<std::uint8_t>(kind), std::memory_order_relaxed);
         mine->id.store(id, std::memory_order_relaxed);
         mine->counter.fetch_add(1, std::memory_order_relaxed);
@@ -100,6 +105,8 @@ std::vector<ThreadActivitySample> snapshot_thread_activity() {
         sample.id = slot.id.load(std::memory_order_relaxed);
         sample.counter = slot.counter.load(std::memory_order_relaxed);
         sample.in_progress = slot.in_progress.load(std::memory_order_relaxed);
+        sample.pc = slot.pc.load(std::memory_order_relaxed);
+        sample.lr = slot.lr.load(std::memory_order_relaxed);
         out.push_back(sample);
     }
     return out;
@@ -221,6 +228,68 @@ std::string describe_thread_activity(const ThreadActivitySample& sample) {
 
 HangWatchdog::HangWatchdog(SnapshotFn snapshot) : snapshot_(std::move(snapshot)) {}
 
+const char* thread_state_name(ThreadState state) {
+    switch (state) {
+    case ThreadState::kProgressing: return "progressing";
+    case ThreadState::kIdleService: return "idle-service";
+    case ThreadState::kIdleWait: return "idle-wait";
+    case ThreadState::kLostWakeSuspect: return "lost-wake-suspect";
+    case ThreadState::kSpinning: return "spinning";
+    case ThreadState::kStalled: return "stalled";
+    }
+    return "?";
+}
+
+ThreadState classify_thread(const ThreadActivitySample& sample, bool changed, std::uint64_t cpu_delta,
+                            bool waiting, bool word_changed, bool wake_missed) {
+    // The library runtime's own parking: READY (0xFE00) on zbhost, PARK (0xFE01) on carriers.
+    if (sample.kind == ThreadActivityKind::kHostCall && (sample.id == 0xFE00 || sample.id == 0xFE01)) {
+        return ThreadState::kIdleService;
+    }
+    if (waiting) {
+        if (word_changed || wake_missed) return ThreadState::kLostWakeSuspect;
+        if (!changed) return ThreadState::kIdleWait;
+    }
+    if (changed) return ThreadState::kProgressing;
+    return cpu_delta > 0 && !sample.in_progress ? ThreadState::kSpinning : ThreadState::kStalled;
+}
+
+namespace {
+
+// CPU ticks of a task from /proc/self/task/<tid>/stat; 0 when unreadable.
+std::uint64_t thread_cpu_ticks(std::int32_t tid) {
+    char path[64];
+    std::snprintf(path, sizeof path, "/proc/self/task/%d/stat", tid);
+    std::FILE* file = std::fopen(path, "re");
+    if (file == nullptr) return 0;
+    char line[1024];
+    const char* read = std::fgets(line, sizeof line, file);
+    std::fclose(file);
+    if (read == nullptr) return 0;
+    const char* cursor = std::strrchr(line, ')');
+    unsigned long long utime = 0, stime = 0;
+    if (cursor == nullptr ||
+        std::sscanf(cursor + 2, "%*c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %llu %llu", &utime, &stime) != 2) {
+        return 0;
+    }
+    return utime + stime;
+}
+
+std::string where(std::uint32_t addr) {
+    if (addr == 0) return "?";
+    const std::string d = futex_trace_describe_address(addr);
+    if (!d.empty()) return d;
+    char text[16];
+    std::snprintf(text, sizeof text, "0x%x", addr);
+    return text;
+}
+
+bool is_idle(ThreadState state) {
+    return state == ThreadState::kIdleService || state == ThreadState::kIdleWait;
+}
+
+}  // namespace
+
 bool HangWatchdog::sample(Clock::time_point now) {
     const std::vector<ThreadActivitySample> current = snapshot_();
 
@@ -239,13 +308,55 @@ bool HangWatchdog::sample(Clock::time_point now) {
         state.kind = sample.kind;
         state.id = sample.id;
         state.counter = sample.counter;
-        if (prior != nullptr && prior->kind == sample.kind && prior->id == sample.id &&
-            prior->counter == sample.counter) {
+        state.cpu = thread_cpu_ticks(sample.tid);
+        const bool changed = prior == nullptr || prior->kind != sample.kind || prior->id != sample.id ||
+                             prior->counter != sample.counter;
+        if (!changed) {
             state.since = prior->since;
             state.unchanged_samples = prior->unchanged_samples + 1;
         } else {
             state.since = now;
             state.unchanged_samples = 0;
+        }
+        state.calls = prior != nullptr && sample.counter >= prior->counter ? sample.counter - prior->counter : 0;
+        if (prior != nullptr) state.pcs = prior->pcs;
+        if (sample.pc != 0 && (state.pcs.empty() || state.pcs.back() != sample.pc)) {
+            state.pcs.push_back(sample.pc);
+            if (state.pcs.size() > 4) state.pcs.erase(state.pcs.begin());
+        }
+        const std::uint64_t cpu_delta = prior != nullptr && state.cpu > prior->cpu ? state.cpu - prior->cpu : 0;
+
+        FutexWaitInfo wait;
+        const bool waiting = sample.in_progress && futex_trace_current_wait(sample.tid, wait);
+        bool wake_missed = false;
+        if (waiting) {
+            for (const FutexWakeInfo& wake : futex_trace_wakes_since(sample.tid, wait.uaddr, 8)) {
+                if (wake.result == 0) wake_missed = true;
+            }
+        }
+        state.state = classify_thread(sample, changed && prior != nullptr, cpu_delta, waiting,
+                                      waiting && wait.current != wait.expected, wake_missed);
+
+        // A rolling line per thread, overwritten every sample, so the report read at any time shows
+        // what each guest thread is doing now and where in the guest it last left translated code.
+        std::string live = std::string(thread_state_name(state.state)) + " calls+" + std::to_string(state.calls) +
+                           " cpu+" + std::to_string(cpu_delta) + " last=" + describe_thread_activity(sample) +
+                           " pc=" + where(sample.pc) + " lr=" + where(sample.lr);
+        if (state.pcs.size() > 1) {
+            live += " recent-pc=[";
+            for (std::size_t i = 0; i < state.pcs.size(); ++i) live += (i ? ", " : "") + where(state.pcs[i]);
+            live += "]";
+        }
+        if (waiting) {
+            live += " wait=0x" + [&] {
+                char text[16];
+                std::snprintf(text, sizeof text, "%x", wait.uaddr);
+                return std::string(text);
+            }() + " waited=" + std::to_string(wait.waited_ms / 1000) + "s";
+        }
+        if (live_threads_ < kMaxLiveThreads || live_tids_.count(sample.tid)) {
+            if (live_tids_.insert(sample.tid).second) ++live_threads_;
+            runtime_report().note_watch_detail("live-" + std::to_string(sample.tid), live);
         }
         next.push_back(state);
     }
@@ -253,9 +364,11 @@ bool HangWatchdog::sample(Clock::time_point now) {
 
     if (notes_written_ >= kMaxNotes) return false;
 
+    // Only states that can be a hang raise notes; idle threads would otherwise use up the note
+    // budget in the first seconds of every run, long before the hang being investigated.
     std::vector<const State*> stuck;
     for (const State& state : previous_) {
-        if (state.unchanged_samples >= kStuckThreshold) stuck.push_back(&state);
+        if (state.unchanged_samples >= kStuckThreshold && !is_idle(state.state)) stuck.push_back(&state);
     }
     if (stuck.empty()) return false;
 
@@ -273,13 +386,12 @@ bool HangWatchdog::sample(Clock::time_point now) {
             std::chrono::duration_cast<std::chrono::seconds>(now - state->since).count();
         value += std::to_string(state->tid) + "=" + describe_thread_activity(sample) +
                  " x" + std::to_string(state->counter) + " stuck=" + std::to_string(seconds) +
-                 " " + thread_kernel_state(state->tid);
+                 " " + thread_state_name(state->state) + " " + thread_kernel_state(state->tid);
         ++shown;
     }
     value += " | recent-jni: " + jni_recent_calls();
-    // What each stuck futex sleeper waits on, once per thread (the wait does not change while it
-    // stays stuck; a new wait after progress gets a fresh line under the same key).
     for (const State* state : stuck) {
+        if (state->state != ThreadState::kLostWakeSuspect) continue;
         const std::string futex = futex_trace_describe(state->tid);
         if (!futex.empty()) runtime_report().note_watch_detail("futex-" + std::to_string(state->tid), futex);
     }

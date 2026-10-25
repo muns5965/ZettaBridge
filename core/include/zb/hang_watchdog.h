@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -23,7 +24,10 @@ enum class ThreadActivityKind : std::uint8_t {
 // Records that guest thread `tid` just performed a syscall (`id` = syscall number) or a host
 // call (`id` = host-call index). Lock-free, allocation-free, safe from any thread: called on
 // every syscall and every host call, so it must stay cheap.
-void record_thread_activity(std::int32_t tid, ThreadActivityKind kind, std::uint32_t id);
+// `pc`/`lr` are the guest registers at that exit (0 when unknown): where in the guest the thread
+// last left translated code, which is all that can be read safely from another thread later.
+void record_thread_activity(std::int32_t tid, ThreadActivityKind kind, std::uint32_t id,
+                            std::uint32_t pc = 0, std::uint32_t lr = 0);
 
 // The host call recorded last for this thread has returned. A thread whose last recorded event is
 // still in progress is blocked inside our own code, which reads very differently from a guest
@@ -36,7 +40,30 @@ struct ThreadActivitySample {
     std::uint32_t id = 0;
     std::uint64_t counter = 0;
     bool in_progress = false;  // still inside the recorded host call or syscall
+    std::uint32_t pc = 0;
+    std::uint32_t lr = 0;
 };
+
+// What a thread is doing between two samples. Waits that are part of normal operation (a
+// condition variable nobody has signalled, the library runtime's service and carrier parking)
+// are told apart from the states that can be a hang, so that idle threads neither raise stuck
+// notes nor use up the note budget before the real hang happens.
+enum class ThreadState : std::uint8_t {
+    kProgressing,      // left translated code again since the last sample
+    kIdleService,      // the library runtime's READY/PARK host calls
+    kIdleWait,         // in FUTEX_WAIT, the word unchanged and no wake issued on it since
+    kLostWakeSuspect,  // in FUTEX_WAIT, but the word changed or a wake on it woke nobody
+    kSpinning,         // no exit from translated code, CPU still climbing
+    kStalled,          // no exit, no CPU: blocked in another call, or parked
+};
+
+const char* thread_state_name(ThreadState state);
+
+// The classification HangWatchdog uses. `changed`: the activity counter moved since the last
+// sample. `cpu_delta`: CPU ticks burned since then. `waiting`, `word_changed`, `wake_missed`
+// describe the thread's current FUTEX_WAIT from futex_trace (waiting false when it is in none).
+ThreadState classify_thread(const ThreadActivitySample& sample, bool changed, std::uint64_t cpu_delta,
+                            bool waiting, bool word_changed, bool wake_missed);
 
 // A snapshot of every guest thread slot touched so far.
 std::vector<ThreadActivitySample> snapshot_thread_activity();
@@ -73,7 +100,14 @@ private:
         std::uint64_t counter = 0;
         Clock::time_point since{};  // when this (kind, id, counter) was first observed
         int unchanged_samples = 0;
+        std::uint64_t cpu = 0;      // CPU ticks at this sample
+        std::uint64_t calls = 0;    // counter change since the previous sample
+        ThreadState state = ThreadState::kProgressing;
+        std::vector<std::uint32_t> pcs;  // the last few distinct exit PCs, oldest first
     };
+    static constexpr std::size_t kMaxLiveThreads = 8;  // threads with a rolling live-<tid> line
+    std::set<std::int32_t> live_tids_;
+    std::size_t live_threads_ = 0;
 
     SnapshotFn snapshot_;
     std::vector<State> previous_;

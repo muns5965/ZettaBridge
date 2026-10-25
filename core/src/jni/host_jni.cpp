@@ -428,6 +428,12 @@ std::optional<HostJni::NativeResult> HostJni::call_native(JniBackend::Env env, c
     // call, no lock, no string work. call_counter is null for calls that are not dispatching a
     // bound native method (the loader's own JNI_OnLoad call), which are not counted.
     if (call_counter != nullptr) call_counter->count.fetch_add(1, std::memory_order_relaxed);
+    struct Returned {
+        NativeCallCounter* counter;
+        ~Returned() {
+            if (counter != nullptr) counter->returned.fetch_add(1, std::memory_order_relaxed);
+        }
+    } returned{call_counter};
     Impl& jni = *impl_;
     JniThread& state = jni.thread();
     const JniBackend::Env outer_env = state.env;

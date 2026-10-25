@@ -598,6 +598,15 @@ std::string RuntimeReport::text() const {
         }
         if (shown == 0) out += " (none)";
         out += " total=" + std::to_string(total) + '\n';
+        // Native methods entered and not yet returned (a loop entry such as startAppThread stays
+        // here for good; an input call such as enqueueKey here means it is stuck inside the guest).
+        std::string inside;
+        for (const NativeCallEntry& entry : native_calls_) {
+            const std::uint64_t in = entry.counter->count.load(std::memory_order_relaxed);
+            const std::uint64_t back = entry.counter->returned.load(std::memory_order_relaxed);
+            if (in > back) inside += " " + entry.name + "=" + std::to_string(in - back);
+        }
+        if (!inside.empty()) out += "native-inside:" + inside + '\n';
     }
 
     if (opened_paths_.empty()) {

@@ -64,6 +64,8 @@ std::string futex_trace_describe(std::int32_t tid,
 // The address describer the watchdog uses, installed once by the syscall layer. It must not block
 // (the process map is read with try_lock) and returns "" when it cannot answer.
 void futex_trace_set_describer(std::function<std::string(std::uint32_t)> describe);
+// A guest address through that describer ("" when unknown or before any futex call).
+std::string futex_trace_describe_address(std::uint32_t addr);
 // futex_trace_describe with that describer; "" when the thread is not waiting.
 std::string futex_trace_describe(std::int32_t tid);
 

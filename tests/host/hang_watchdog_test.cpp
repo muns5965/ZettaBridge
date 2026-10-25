@@ -106,6 +106,90 @@ int main() {
     CHECK(!watchdog2.sample(now2));
     CHECK(zb::runtime_report().text().find("watch-1") == std::string::npos);
 
+    // classify_thread: idle waits are told apart from states that can be a hang.
+    {
+        zb::ThreadActivitySample s;
+        s.kind = zb::ThreadActivityKind::kHostCall;
+        s.id = 0xFE00;
+        CHECK(zb::classify_thread(s, false, 0, false, false, false) == zb::ThreadState::kIdleService);
+        s.id = 0xFE01;
+        CHECK(zb::classify_thread(s, false, 0, false, false, false) == zb::ThreadState::kIdleService);
+        s.kind = zb::ThreadActivityKind::kSyscall;
+        s.id = 240;
+        s.in_progress = true;
+        CHECK(zb::classify_thread(s, false, 0, true, false, false) == zb::ThreadState::kIdleWait);
+        CHECK(zb::classify_thread(s, false, 0, true, true, false) == zb::ThreadState::kLostWakeSuspect);
+        CHECK(zb::classify_thread(s, false, 0, true, false, true) == zb::ThreadState::kLostWakeSuspect);
+        CHECK(zb::classify_thread(s, true, 5, false, false, false) == zb::ThreadState::kProgressing);
+        s.in_progress = false;
+        CHECK(zb::classify_thread(s, false, 7, false, false, false) == zb::ThreadState::kSpinning);
+        CHECK(zb::classify_thread(s, false, 0, false, false, false) == zb::ThreadState::kStalled);
+    }
+
+    // An idle service thread never raises a stuck note (it would use up the note budget long
+    // before a real hang), but it still gets a rolling live line.
+    zb::runtime_report().clear();
+    zb::HangWatchdog idle_watchdog([&]() {
+        std::vector<zb::ThreadActivitySample> out;
+        zb::ThreadActivitySample service;
+        service.tid = 444;
+        service.kind = zb::ThreadActivityKind::kHostCall;
+        service.id = 0xFE00;
+        service.counter = 9;
+        service.in_progress = true;
+        out.push_back(service);
+        return out;
+    });
+    Clock::time_point now3{};
+    for (int i = 0; i < 5; ++i) {
+        CHECK(!idle_watchdog.sample(now3));
+        now3 += std::chrono::seconds(3);
+    }
+    {
+        const std::string idle_text = zb::runtime_report().text();
+        CHECK(!contains(idle_text, "watch-1:"));
+        CHECK(contains(idle_text, "watch-live-444: idle-service"));
+    }
+
+    // The live line records where the thread last left translated code, with recent distinct PCs.
+    zb::runtime_report().clear();
+    std::uint32_t pc = 0x1000;
+    zb::HangWatchdog live_watchdog([&]() {
+        std::vector<zb::ThreadActivitySample> out;
+        zb::ThreadActivitySample busy;
+        busy.tid = 555;
+        busy.kind = zb::ThreadActivityKind::kSyscall;
+        busy.id = 3;
+        static std::uint64_t counter = 0;
+        busy.counter = ++counter;
+        busy.pc = pc;
+        busy.lr = 0x2000;
+        out.push_back(busy);
+        return out;
+    });
+    Clock::time_point now4{};
+    live_watchdog.sample(now4);
+    pc = 0x1100;
+    now4 += std::chrono::seconds(3);
+    live_watchdog.sample(now4);
+    {
+        const std::string live_text = zb::runtime_report().text();
+        CHECK(contains(live_text, "watch-live-555: progressing calls+1"));
+        CHECK(contains(live_text, "pc=0x1100 lr=0x2000"));
+        CHECK(contains(live_text, "recent-pc=[0x1000, 0x1100]"));
+    }
+
+    // A native method entered but not returned is listed.
+    {
+        zb::RuntimeReport report;
+        zb::NativeCallCounter& key = report.native_call_counter("com/x/A.enqueueKey");
+        key.count.fetch_add(2);
+        key.returned.fetch_add(1);
+        CHECK(contains(report.text(), "native-inside: com/x/A.enqueueKey=1"));
+        key.returned.fetch_add(1);
+        CHECK(!contains(report.text(), "native-inside:"));
+    }
+
     std::puts("hang_watchdog_test: ok");
     return 0;
 }

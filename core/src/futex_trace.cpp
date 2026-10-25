@@ -248,6 +248,10 @@ void futex_trace_set_describer(std::function<std::string(std::uint32_t)> describ
     });
 }
 
+std::string futex_trace_describe_address(std::uint32_t addr) {
+    return g_describer_set.load(std::memory_order_acquire) ? g_describer(addr) : std::string();
+}
+
 std::string futex_trace_describe(std::int32_t tid) {
     static const std::function<std::string(std::uint32_t)> none = [](std::uint32_t) { return std::string(); };
     return futex_trace_describe(tid, g_describer_set.load(std::memory_order_acquire) ? g_describer : none);

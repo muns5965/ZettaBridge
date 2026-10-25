@@ -17,7 +17,8 @@ namespace zb {
 // method's thunk slot, so every later Java -> guest call costs one relaxed atomic add and no
 // lock. RuntimeReport owns the counters so they outlive the HostJni slot table in reports.
 struct NativeCallCounter {
-    std::atomic<std::uint64_t> count{0};
+    std::atomic<std::uint64_t> count{0};     // calls entered
+    std::atomic<std::uint64_t> returned{0};  // calls that came back; fewer means one is still inside
 };
 
 // Diagnostics that must survive a silent :guest death. OxygenOS drops third-party logcat
@@ -219,7 +220,7 @@ private:
     std::vector<std::pair<std::string, std::string>> jni_details_;
     static constexpr std::size_t kMaxSysDetails = 8;
     std::vector<std::pair<std::string, std::string>> sys_details_;
-    static constexpr std::size_t kMaxWatchDetails = 24;
+    static constexpr std::size_t kMaxWatchDetails = 32;
     std::vector<std::pair<std::string, std::string>> watch_details_;
     static constexpr std::size_t kMaxLooperDetails = 16;
     std::vector<std::pair<std::string, std::string>> looper_details_;
