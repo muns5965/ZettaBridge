@@ -7,6 +7,10 @@ on:
       - feature/styletap-android17
     paths:
       - '.github/workflows/styletap-debug-apk.yml'
+      - 'android/launcher/**'
+      - 'core/**'
+      - 'tools/**'
+      - 'third_party/patches/**'
 
 permissions:
   contents: read
