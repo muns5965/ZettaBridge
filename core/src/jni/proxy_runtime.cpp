@@ -12,6 +12,9 @@
 
 #include "zb/hang_watchdog.h"
 #include "zb/host_jni.h"
+#if defined(__ANDROID__)
+#include "../android/bitmap_runtime.h"
+#endif
 #include "zb/library_protocol.h"
 #include "zb/log.h"
 #include "zb/runtime_report.h"
@@ -426,6 +429,9 @@ GuestJniEngine::GuestJniEngine(JniBackend& backend, GlBackend* gl_backend, HostG
         });
     }
     host_compat_ = new HostPlatformCompat();
+#if defined(__ANDROID__)
+    host_compat_->set_bitmap_runtime(new BitmapRuntime(*runtime_, *host_jni_));
+#endif
     if (gl_backend != nullptr) {
         host_gl_ = new HostGl(*runtime_, *gl_backend, HostGl::GuestAllocator{}, std::move(egl_context_probe));
     }
