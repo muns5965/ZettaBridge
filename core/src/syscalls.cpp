@@ -41,6 +41,7 @@
 #include "gen/syscall_nrs_arm.h"
 #include "zb/elf_fixups.h"
 #include "zb/guest_abi.h"
+#include "zb/net_ioctl.h"
 #include "zb/guest_memory.h"
 #include "zb/guest_thread.h"
 #include "zb/hang_watchdog.h"
@@ -617,6 +618,50 @@ std::int32_t sys_statx(Ctx& c) {
     return result_of(::syscall(SYS_statx, static_cast<int>(c.a[0]), host_path.c_str(), static_cast<int>(c.a[2]), c.a[3], buf));
 }
 
+// SIOCGIFCONF: the interface address list. Palm NetLib in StyleTap finds its local address this
+// way. The arm32 struct ifconf/ifreq differ in size from the host's, see net_ioctl.h.
+void note_unsupported_ioctl(unsigned long request) {
+    // One line listing the distinct refused requests, the first 8 of them.
+    static std::mutex mutex;
+    static std::string list;
+    static unsigned count = 0;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (count >= 8) return;
+    char hex[24];
+    std::snprintf(hex, sizeof hex, "%s0x%lx", count == 0 ? "" : ",", request);
+    list += hex;
+    ++count;
+    runtime_report().note_sys_detail("ioctl-unsupported", list);
+}
+
+std::int32_t sys_ioctl_ifconf(Ctx& c) {
+    std::uint8_t* raw = c.mem.host_ptr(c.a[2], sizeof(GuestIfconf), kPageRead | kPageWrite);
+    if (!raw) return -EFAULT;
+    GuestIfconf guest;
+    std::memcpy(&guest, raw, sizeof guest);
+    std::uint8_t* buf = nullptr;
+    if (guest.buf != 0) {
+        if (guest.len < 0) return -EINVAL;
+        buf = c.mem.host_ptr(guest.buf, static_cast<std::uint32_t>(guest.len), kPageWrite);
+        if (!buf) return -EFAULT;
+    }
+    const int fd = static_cast<int>(c.a[0]);
+    const IfconfResult r = translate_ifconf(guest.len, buf, [fd](struct ifconf* host) {
+        return ::ioctl(fd, SIOCGIFCONF, host) == 0 ? 0 : -errno;
+    });
+    const char* key = buf ? "net-ifconf-result" : "net-ifconf-query";
+    if (r.rc != 0) {
+        runtime_report().note_sys_detail(key, std::string("error=") + std::strerror(-r.rc) + " errno=" +
+                                                  std::to_string(-r.rc));
+        return r.rc;
+    }
+    runtime_report().note_sys_detail(key, "entries=" + std::to_string(r.entries) +
+                                              " guestBytes=" + std::to_string(r.guest_len));
+    guest.len = r.guest_len;
+    std::memcpy(raw, &guest.len, sizeof guest.len);
+    return 0;
+}
+
 std::int32_t sys_ioctl(Ctx& c) {
     const unsigned long request = c.a[1];
     std::uint32_t arg_size = 0;
@@ -626,8 +671,12 @@ std::int32_t sys_ioctl(Ctx& c) {
     case TIOCGWINSZ: arg_size = 8; break;
     case FIONREAD: arg_size = 4; break;
     case FIONBIO: arg_size = 4; need = kPageRead; break;
+    case kSiocGifconf: return sys_ioctl_ifconf(c);
     default:
-        if (c.proc.first_time(kSeenIoctl | request)) log("unsupported ioctl 0x%lx on fd %u", request, c.a[0]);
+        if (c.proc.first_time(kSeenIoctl | request)) {
+            log("unsupported ioctl 0x%lx on fd %u", request, c.a[0]);
+            note_unsupported_ioctl(request);
+        }
         return -ENOTTY;
     }
     std::uint8_t* arg = c.mem.host_ptr(c.a[2], arg_size, need);

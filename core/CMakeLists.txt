@@ -37,6 +37,7 @@ add_library(zbcore STATIC
     src/jni/thunks.S
     src/library_runtime.cpp
     src/log.cpp
+    src/net_ioctl.cpp
     src/proc_files.cpp
     src/process.cpp
     src/runtime_report.cpp

@@ -18,6 +18,7 @@ set(ZB_HOST_TESTS
     jni_shorty_test
     native_activity_test
     native_thunk_test
+    net_ioctl_test
     path_translation_test
     platform_compat_test
     proxy_runtime_test

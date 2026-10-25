@@ -110,6 +110,11 @@ public:
     // kMaxWatchDetails keys; later new keys are dropped.
     void note_watch_detail(const std::string& key, const std::string& value);
 
+    // System-call layer diagnostics (SIOCGIFCONF, refused ioctls): one "sys-<key>: <value>"
+    // line per key, in first-note order, later notes of the same key overwriting the value. At
+    // most kMaxSysDetails keys; later new keys are dropped.
+    void note_sys_detail(const std::string& key, const std::string& value);
+
     // EGL section (Phase 7a Task 7): proves or disproves that the guest built an EGL context and
     // surface and is presenting frames on the thread GL calls arrive on.
     // A created EGL object (context or window surface): one "egl-<key>: <value>" line per key,
@@ -212,6 +217,8 @@ private:
     std::vector<std::pair<std::string, std::string>> crash_details_;
     static constexpr std::size_t kMaxJniDetails = 16;
     std::vector<std::pair<std::string, std::string>> jni_details_;
+    static constexpr std::size_t kMaxSysDetails = 8;
+    std::vector<std::pair<std::string, std::string>> sys_details_;
     static constexpr std::size_t kMaxWatchDetails = 8;
     std::vector<std::pair<std::string, std::string>> watch_details_;
     static constexpr std::size_t kMaxLooperDetails = 16;
