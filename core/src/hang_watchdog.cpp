@@ -12,6 +12,7 @@
 #include <thread>
 
 #include "zb/futex_trace.h"
+#include "zb/guest_probe.h"
 #include "zb/host_jni.h"
 #include "zb/runtime_report.h"
 #include "zb/syscalls.h"
@@ -33,6 +34,11 @@ struct Slot {
     std::atomic<std::uint64_t> counter{0};
     std::atomic<std::uint32_t> pc{0};
     std::atomic<std::uint32_t> lr{0};
+    // Capture on request: seq odd while the owner writes.
+    std::atomic<bool> capture_wanted{false};
+    std::atomic<std::uint32_t> capture_seq{0};
+    std::uint32_t capture_count = 0;
+    std::uint32_t capture[kCaptureWords] = {};
 };
 
 Slot g_slots[kMaxSlots];
@@ -83,6 +89,54 @@ void record_thread_activity(std::int32_t tid, ThreadActivityKind kind, std::uint
     free_slot->counter.store(1, std::memory_order_relaxed);
     mine = free_slot;
     mine_tid = tid;
+}
+
+namespace {
+Slot* find_slot(std::int32_t tid) {
+    for (Slot& slot : g_slots) {
+        if (slot.tid.load(std::memory_order_relaxed) == tid) return &slot;
+    }
+    return nullptr;
+}
+}  // namespace
+
+bool thread_capture_requested(std::int32_t tid) {
+    static thread_local Slot* cached = nullptr;
+    static thread_local std::int32_t cached_tid = 0;
+    if (cached == nullptr || cached_tid != tid || cached->tid.load(std::memory_order_relaxed) != tid) {
+        cached = find_slot(tid);
+        cached_tid = tid;
+        if (cached == nullptr) return false;
+    }
+    return cached->capture_wanted.load(std::memory_order_relaxed);
+}
+
+void record_thread_capture(std::int32_t tid, const std::uint32_t* words, std::uint32_t count) {
+    Slot* slot = find_slot(tid);
+    if (slot == nullptr) return;
+    if (count > kCaptureWords) count = kCaptureWords;
+    slot->capture_seq.fetch_add(1, std::memory_order_acq_rel);
+    for (std::uint32_t i = 0; i < count; ++i) slot->capture[i] = words[i];
+    slot->capture_count = count;
+    slot->capture_seq.fetch_add(1, std::memory_order_acq_rel);
+    slot->capture_wanted.store(false, std::memory_order_relaxed);
+}
+
+bool latest_thread_capture(std::int32_t tid, std::uint32_t* words, std::uint32_t& count) {
+    Slot* slot = find_slot(tid);
+    if (slot == nullptr) return false;
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        const std::uint32_t before = slot->capture_seq.load(std::memory_order_acquire);
+        if (before == 0 || (before & 1)) return false;
+        count = slot->capture_count;
+        for (std::uint32_t i = 0; i < count; ++i) words[i] = slot->capture[i];
+        if (slot->capture_seq.load(std::memory_order_acquire) == before) return true;
+    }
+    return false;
+}
+
+void request_thread_capture(std::int32_t tid) {
+    if (Slot* slot = find_slot(tid)) slot->capture_wanted.store(true, std::memory_order_relaxed);
 }
 
 void record_thread_activity_done(std::int32_t tid) {
@@ -319,7 +373,10 @@ bool HangWatchdog::sample(Clock::time_point now) {
             state.unchanged_samples = 0;
         }
         state.calls = prior != nullptr && sample.counter >= prior->counter ? sample.counter - prior->counter : 0;
-        if (prior != nullptr) state.pcs = prior->pcs;
+        if (prior != nullptr) {
+            state.pcs = prior->pcs;
+            state.m68k_pcs = prior->m68k_pcs;
+        }
         if (sample.pc != 0 && (state.pcs.empty() || state.pcs.back() != sample.pc)) {
             state.pcs.push_back(sample.pc);
             if (state.pcs.size() > 4) state.pcs.erase(state.pcs.begin());
@@ -346,6 +403,33 @@ bool HangWatchdog::sample(Clock::time_point now) {
             live += " recent-pc=[";
             for (std::size_t i = 0; i < state.pcs.size(); ++i) live += (i ? ", " : "") + where(state.pcs[i]);
             live += "]";
+        }
+        // StyleTap: where the emulated 68K program is, from the last capture of this thread.
+        {
+            std::uint32_t words[kCaptureWords];
+            std::uint32_t count = 0;
+            if (latest_thread_capture(sample.tid, words, count)) {
+                if (const std::optional<M68kState> m = find_styletap_m68k(words, count)) {
+                    if (state.m68k_pcs.empty() || state.m68k_pcs.back() != m->pc) {
+                        state.m68k_pcs.push_back(m->pc);
+                        if (state.m68k_pcs.size() > 6) state.m68k_pcs.erase(state.m68k_pcs.begin());
+                    }
+                    char text[160];
+                    std::snprintf(text, sizeof text, " m68k: pc=0x%x sr=0x%04x trap=0x%04x d0=0x%x a7=0x%x",
+                                  m->pc, m->sr, m->trap, m->d0, m->a7);
+                    live += text;
+                    if (state.m68k_pcs.size() > 1) {
+                        live += " recent-68k-pc=[";
+                        for (std::size_t i = 0; i < state.m68k_pcs.size(); ++i) {
+                            std::snprintf(text, sizeof text, "%s0x%x", i ? ", " : "", state.m68k_pcs[i]);
+                            live += text;
+                        }
+                        live += "]";
+                    }
+                }
+            }
+            // Ask for a fresh one from threads that keep calling out; idle ones have nothing new.
+            if (state.calls > 0) request_thread_capture(sample.tid);
         }
         if (waiting) {
             live += " wait=0x" + [&] {

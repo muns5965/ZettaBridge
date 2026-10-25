@@ -6,6 +6,7 @@ set(ZB_HOST_TESTS
     elf_fixups_test
     elf_symbols_test
     guest_memory_test
+    guest_probe_test
     hang_watchdog_test
     host_looper_test
     gles_client_arrays_test

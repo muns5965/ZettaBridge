@@ -229,6 +229,17 @@ std::string Process::describe_address(std::uint32_t addr) const {
     return "?";
 }
 
+std::uint32_t Process::image_base(const std::string& basename) const {
+    for (const auto& m : file_mappings_) {
+        if (m.offset != 0 || m.path.size() < basename.size()) continue;
+        const std::size_t at = m.path.size() - basename.size();
+        if (m.path.compare(at, std::string::npos, basename) == 0 && (at == 0 || m.path[at - 1] == '/')) {
+            return m.start;
+        }
+    }
+    return 0;
+}
+
 void Process::add_textrel_range(std::uint32_t start, std::uint32_t length) {
     textrel_ranges_.emplace_back(start, length);
 }

@@ -34,6 +34,17 @@ void record_thread_activity(std::int32_t tid, ThreadActivityKind kind, std::uint
 // that simply stopped calling out.
 void record_thread_activity_done(std::int32_t tid);
 
+// Register and stack capture on request. The watchdog asks for one per busy thread; the thread
+// itself copies r4-r11 and its nearest stack words at its next syscall, so no thread's CPU state
+// is ever read from another thread.
+constexpr std::size_t kCaptureWords = 8 + 64;  // r4-r11, then stack words from sp up
+// Cheap check made on every syscall: has the watchdog asked this thread for a capture?
+bool thread_capture_requested(std::int32_t tid);
+void record_thread_capture(std::int32_t tid, const std::uint32_t* words, std::uint32_t count);
+// The thread's latest capture; false when it has none.
+bool latest_thread_capture(std::int32_t tid, std::uint32_t* words, std::uint32_t& count);
+void request_thread_capture(std::int32_t tid);
+
 struct ThreadActivitySample {
     std::int32_t tid = 0;
     ThreadActivityKind kind = ThreadActivityKind::kNone;
@@ -104,6 +115,7 @@ private:
         std::uint64_t calls = 0;    // counter change since the previous sample
         ThreadState state = ThreadState::kProgressing;
         std::vector<std::uint32_t> pcs;  // the last few distinct exit PCs, oldest first
+        std::vector<std::uint32_t> m68k_pcs;  // StyleTap only: last few distinct 68K PCs
     };
     static constexpr std::size_t kMaxLiveThreads = 8;  // threads with a rolling live-<tid> line
     std::set<std::int32_t> live_tids_;

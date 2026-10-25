@@ -190,6 +190,23 @@ int main() {
         CHECK(!contains(report.text(), "native-inside:"));
     }
 
+    // Capture on request: nothing until the watchdog asks, then the thread's own copy, once.
+    {
+        zb::record_thread_activity(777, zb::ThreadActivityKind::kSyscall, 78);
+        CHECK(!zb::thread_capture_requested(777));
+        std::uint32_t got[zb::kCaptureWords];
+        std::uint32_t got_count = 0;
+        CHECK(!zb::latest_thread_capture(777, got, got_count));
+        zb::request_thread_capture(777);
+        CHECK(zb::thread_capture_requested(777));
+        const std::uint32_t words[] = {4, 5, 6, 7, 8, 9, 10, 11, 0x1000, 0x2000};
+        zb::record_thread_capture(777, words, 10);
+        CHECK(!zb::thread_capture_requested(777));
+        CHECK(zb::latest_thread_capture(777, got, got_count));
+        CHECK(got_count == 10);
+        CHECK(got[0] == 4 && got[9] == 0x2000);
+    }
+
     std::puts("hang_watchdog_test: ok");
     return 0;
 }

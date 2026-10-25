@@ -164,6 +164,9 @@ public:
     void forget_mappings(std::uint32_t start, std::uint64_t length);
     // "libc.so offset 0x1234" style description, or "?" if the address is not file-backed.
     std::string describe_address(std::uint32_t addr) const;
+    // Guest address of the offset-0 segment of the mapped file whose name is `basename`, or 0.
+    // Callers hold mm_mutex().
+    std::uint32_t image_base(const std::string& basename) const;
 
     // Executable segments of libraries marked DT_ZB_TEXTREL (see elf_fixups.h). They stay
     // writable inside the emulator so text relocations can be applied. forget_mappings drops them.

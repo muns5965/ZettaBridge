@@ -41,6 +41,8 @@
 #include "gen/syscall_nrs_arm.h"
 #include "zb/elf_fixups.h"
 #include "zb/futex_trace.h"
+#include "zb/guest_probe.h"
+#include "zb/hang_watchdog.h"
 #include "zb/guest_abi.h"
 #include "zb/net_ioctl.h"
 #include "zb/guest_memory.h"
@@ -731,6 +733,46 @@ std::int32_t sys_uname(Ctx& c) {
     return write_guest(c.mem, c.a[0], u) ? 0 : -EFAULT;
 }
 
+void install_guest_inspector(Process& proc) {
+    static std::once_flag once;
+    Process* p = &proc;
+    std::call_once(once, [p] {
+        GuestInspector inspector;
+        inspector.library_base = [p](const std::string& name) -> std::optional<std::uint32_t> {
+            std::unique_lock<std::mutex> lock(p->mm_mutex(), std::try_to_lock);
+            if (!lock.owns_lock()) return std::nullopt;
+            const std::uint32_t base = p->image_base(name);
+            return base != 0 ? std::optional<std::uint32_t>(base) : std::nullopt;
+        };
+        inspector.read_u32 = [p](std::uint32_t addr) -> std::optional<std::uint32_t> {
+            const std::uint8_t* host = p->memory().host_ptr(addr, 4, kPageRead);
+            if (host == nullptr) return std::nullopt;
+            std::uint32_t value;
+            std::memcpy(&value, host, sizeof value);
+            return value;
+        };
+        set_guest_inspector(std::move(inspector));
+    });
+}
+
+// The watchdog asked this thread for its callee-saved registers and nearest stack words
+// (hang_watchdog.h). Copied by the thread itself, at a syscall, so nothing reads it while it runs.
+void capture_for_watchdog(Ctx& c, std::int32_t tid) {
+    install_guest_inspector(c.proc);
+    const auto& r = c.thread.regs();
+    std::uint32_t words[kCaptureWords];
+    std::uint32_t n = 0;
+    for (int reg = 4; reg <= 11; ++reg) words[n++] = r[reg];
+    for (std::uint32_t want = kCaptureWords - 8; want > 0; want /= 2) {
+        if (const std::uint8_t* stack = c.mem.host_ptr(r[13], want * 4, kPageRead)) {
+            std::memcpy(words + n, stack, want * 4);
+            n += want;
+            break;
+        }
+    }
+    record_thread_capture(tid, words, n);
+}
+
 std::int32_t trace_tid(GuestThread& thread) {
     return thread.tid != 0 ? thread.tid : static_cast<std::int32_t>(::syscall(SYS_gettid));
 }
@@ -1282,6 +1324,7 @@ bool handle_syscall(Process& proc, GuestThread& thread) {
         return thread.tid != 0 ? thread.tid : static_cast<std::int32_t>(::syscall(SYS_gettid));
     };
     record_thread_activity(guest_tid(), ThreadActivityKind::kSyscall, nr, regs[15], regs[14]);
+    if (thread_capture_requested(guest_tid())) capture_for_watchdog(c, guest_tid());
     // Marks the syscall finished on every exit path, so a thread sitting inside one (a blocking
     // futex, a poll) reads differently from a thread that merely stopped calling out.
     struct ActivityDone {

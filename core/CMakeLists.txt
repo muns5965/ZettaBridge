@@ -15,6 +15,7 @@ add_library(zbcore STATIC
     src/guest_thread.cpp
     src/hang_watchdog.cpp
     src/futex_trace.cpp
+    src/guest_probe.cpp
     src/gl/egl_manual.cpp
     src/gl/gl_diagnostics.cpp
     src/gl/gl_manual.cpp
