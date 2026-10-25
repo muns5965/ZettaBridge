@@ -181,12 +181,19 @@ public final class LauncherContractsTest {
         check(!TelephonyHook.legacyNull(11, null), "no permissions keeps the exception");
     }
 
+    private static void testInsetPaddingPolicy() {
+        check(GuestWindowStyle.needsInsetPadding(11), "targetSdk 11 is padded below the bars");
+        check(GuestWindowStyle.needsInsetPadding(34), "targetSdk 34 is padded below the bars");
+        check(!GuestWindowStyle.needsInsetPadding(35), "targetSdk 35 handles insets itself");
+    }
+
     public static void main(String[] args) throws Exception {
         File root = Files.createTempDirectory("zb-launcher-contracts-").toFile();
         try {
             testAbiPriority();
             testResourcePackageMapping();
             testTelephonyFallbackPolicy();
+            testInsetPaddingPolicy();
             testNamesAndDelegation();
             testExtractionAndMetadata(root);
             testProxy(root);

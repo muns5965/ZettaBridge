@@ -2,6 +2,7 @@ package com.zettabridge.launcher;
 
 import android.app.Activity;
 import android.content.res.TypedArray;
+import android.graphics.Insets;
 import android.os.Build;
 import android.util.Log;
 import android.view.View;
@@ -43,7 +44,10 @@ final class GuestWindowStyle {
         Window window = activity.getWindow();
         if (window == null) return;
         final int flags = window.getAttributes().flags;
-        if ((flags & WindowManager.LayoutParams.FLAG_FULLSCREEN) == 0) return;
+        if ((flags & WindowManager.LayoutParams.FLAG_FULLSCREEN) == 0) {
+            keepBelowSystemBars(activity);
+            return;
+        }
         if (activity.getActionBar() != null) activity.getActionBar().hide();
         hideSystemBars(activity);
         final View decor = window.getDecorView();
@@ -94,6 +98,37 @@ final class GuestWindowStyle {
         decor.getViewTreeObserver().addOnWindowFocusChangeListener(focused -> {
             if (focused) hideSystemBars(activity);
         });
+    }
+
+    /**
+     * Android 15+ draws every window of a targetSdk 35 app edge to edge, and the launcher owns the
+     * plugin's window. A plugin built before that rule (StyleTap) lays its screen out from the top
+     * of the window, so its top row went under the status bar. For a non-fullscreen plugin that
+     * targets SDK 34 or lower, pad the content view by the system bar and cutout insets, which is
+     * where the system would have placed it. Newer plugins handle insets themselves.
+     */
+    static void keepBelowSystemBars(Activity activity) {
+        if (Build.VERSION.SDK_INT < 35) return;
+        if (!needsInsetPadding(activity.getApplicationInfo().targetSdkVersion)) return;
+        final View content = activity.findViewById(android.R.id.content);
+        if (content == null) return;
+        final boolean[] noted = {false};
+        content.setOnApplyWindowInsetsListener((v, insets) -> {
+            Insets bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+            if (!noted[0]) {
+                noted[0] = true;
+                Diagnostics.note(activity, "window-insets: top=" + bars.top + " bottom=" + bars.bottom
+                        + " left=" + bars.left + " right=" + bars.right + " applied=padding");
+            }
+            return insets;
+        });
+        content.requestApplyInsets();
+    }
+
+    /** Plugins targeting SDK 34 or lower predate enforced edge-to-edge. */
+    static boolean needsInsetPadding(int targetSdk) {
+        return targetSdk < 35;
     }
 
     @SuppressWarnings("deprecation")
