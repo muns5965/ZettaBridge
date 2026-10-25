@@ -41,10 +41,22 @@ jobs:
           yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses > /dev/null || test "${PIPESTATUS[1]}" -eq 0
           "$SDKMANAGER" --sdk_root="$SDK_ROOT" --install "ndk;29.0.14206865"
           echo "ANDROID_NDK_HOME=$SDK_ROOT/ndk/29.0.14206865" >> "$GITHUB_ENV"
-      - name: Apply Dynarmic source patches
+      - name: Apply Dynarmic patches when available
+        shell: bash
         run: |
-          git -C third_party/dynarmic apply --check ../../patches/dynarmic-0001-thumb32-armv8.patch ../../patches/dynarmic-0002-asimd-narrowing.patch
-          git -C third_party/dynarmic apply ../../patches/dynarmic-0001-thumb32-armv8.patch ../../patches/dynarmic-0002-asimd-narrowing.patch
+          set -euo pipefail
+          PATCH_DIR="$GITHUB_WORKSPACE/patches"
+          PATCHES=(
+            "$PATCH_DIR/dynarmic-0001-thumb32-armv8.patch"
+            "$PATCH_DIR/dynarmic-0002-asimd-narrowing.patch"
+          )
+          if [ -f "${PATCHES[0]}" ] && [ -f "${PATCHES[1]}" ]; then
+            git -C third_party/dynarmic apply --check "${PATCHES[@]}"
+            git -C third_party/dynarmic apply "${PATCHES[@]}"
+          else
+            echo "::warning::Dynarmic patch files are absent from this fork; compiling the pinned submodule without these patches."
+            printf 'Missing patches: %s\n' "${PATCHES[@]}"
+          fi
       - name: Configure Android ARM64
         run: |
           cmake -S . -B build/android-arm64 -G Ninja \
